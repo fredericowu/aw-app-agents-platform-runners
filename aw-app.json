@@ -209,7 +209,7 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-3-8-flash-medium",
+          "slug": "agy-runner-gemini-3-8-flash-medium",
           "provider": "runner",
           "model_id": "antigravity-runner-gemini-3-8-flash-medium",
           "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash Medium)",
