@@ -2638,6 +2638,12 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     argv += spec["default_extra"]
     argv += list(job.get("extra_args") or [])
 
+    # Claude/Codex images expose the authenticated subscription-quota probe.
+    # Keep it around the real CLI command so its JSON event is emitted only
+    # after the turn, through the same stdout stream the caller already parses.
+    if cli in ("claude", "codex"):
+        argv = ["aw-cli-with-quota", cli, *argv]
+
     env = {}
     if job.get("notion_task_id"):
         env["NOTION_TASK_ID"] = job["notion_task_id"]

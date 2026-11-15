@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 
 import redis
@@ -151,6 +152,17 @@ def main() -> int:
             print(f"aw-warm-relay: run={run_id} already finalised — "
                   f"skipping duplicate done", file=sys.stderr)
             continue
+        try:
+            quota = subprocess.run(
+                ["/usr/local/bin/aw-quota-report", "claude"],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            quota_line = quota.stdout.strip().splitlines()[-1] if quota.stdout.strip() else ""
+            if quota_line:
+                r.xadd(stream_key, {"type": "stdout", "line": quota_line},
+                       maxlen=50_000, approximate=True)
+        except Exception as e:
+            print(f"aw-warm-relay: quota report failed ({e})", file=sys.stderr)
         try:
             r.xadd(stream_key, {"done": "1", "returncode": "0"}, maxlen=50_000, approximate=True)
             r.expire(stream_key, 86400)
