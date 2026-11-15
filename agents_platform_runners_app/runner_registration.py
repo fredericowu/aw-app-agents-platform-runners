@@ -29,7 +29,7 @@ from . import platform_base as platform_base_mod
 
 log = logging.getLogger("aw_apps.agents_platform_runners.runner_registration")
 
-RUNNERS = ["claude", "codex", "copilot", "cursor-agent"]
+RUNNERS = ["claude", "codex", "copilot", "cursor-agent", "agy"]
 TIMEOUT_S = 20.0
 
 # A single non-fatal attempt was the actual gap behind the 2026-09-18
@@ -48,6 +48,11 @@ REGISTER_RETRY_BACKOFF_S = (1.0, 2.0)
 
 def runner_status(name: str) -> dict:
     path = shutil.which(name)
+    if not path and name == "agy":
+        workspace_dir = os.environ.get("AW_WORKSPACE_CONTAINER_DIR", "/opt/aw-workspace")
+        candidate = os.path.join(workspace_dir, ".aw-workspace", "bin", "agy")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            path = candidate
     if not path:
         return {"installed": False, "path": None, "version": None}
     # cursor-agent writes a fresh debug-session log under

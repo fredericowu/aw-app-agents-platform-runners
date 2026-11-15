@@ -196,6 +196,58 @@
           }
         },
         {
+          "slug": "antigravity-runner-gemini-3-8-flash-high",
+          "provider": "runner",
+          "model_id": "antigravity-runner-gemini-3-8-flash-high",
+          "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash High)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-3.8-flash-high",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "antigravity-runner-gemini-3-8-flash-medium",
+          "provider": "runner",
+          "model_id": "antigravity-runner-gemini-3-8-flash-medium",
+          "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash Medium)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-3.8-flash-medium",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "antigravity-runner-gemini-3-8-flash-low",
+          "provider": "runner",
+          "model_id": "antigravity-runner-gemini-3-8-flash-low",
+          "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash Low)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-3.8-flash-low",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "antigravity-runner-gemini-flash",
+          "provider": "runner",
+          "model_id": "antigravity-runner-gemini-flash",
+          "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-3.8-flash-high",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
           "slug": "claude-runner-sonnet",
           "provider": "runner",
           "model_id": "claude-runner-sonnet",
@@ -780,6 +832,48 @@
           "disable_harness_tools": true,
           "icon": "bot",
           "color": "#ffa657"
+        },
+        {
+          "slug": "telegram-gemini-flash",
+          "name": "Telegram - Gemini Flash",
+          "description": "The Antigravity-backed Telegram variant, for fast and intelligent conversations powered by Google Gemini 3.8 Flash while staying reachable from the phone.",
+          "system_prompt_file": "prompts/telegram.md",
+          "model_slug": "antigravity-runner-gemini-3-8-flash-high",
+          "agent_config_slug": "agent-config-aw-full",
+          "skill_slugs": [
+            "aw-agent-telegram"
+          ],
+          "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
+          "use_cases": [
+            "reply to a Telegram message with Gemini 3.8 Flash",
+            "run a task from the phone with Antigravity",
+            "use Gemini through a Telegram conversation"
+          ],
+          "hidden_from_flow": false,
+          "disable_harness_tools": true,
+          "icon": "bot",
+          "color": "#4285f4"
+        },
+        {
+          "slug": "telegram-antigravity",
+          "name": "Telegram - Antigravity",
+          "description": "The Google Antigravity-backed Telegram variant, providing conversational access to Google's cutting-edge models from Telegram.",
+          "system_prompt_file": "prompts/telegram.md",
+          "model_slug": "antigravity-runner-gemini-flash",
+          "agent_config_slug": "agent-config-aw-full",
+          "skill_slugs": [
+            "aw-agent-telegram"
+          ],
+          "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
+          "use_cases": [
+            "reply to a Telegram message with Antigravity",
+            "run a task from the phone using Google models",
+            "chat with Gemini via Antigravity on Telegram"
+          ],
+          "hidden_from_flow": false,
+          "disable_harness_tools": true,
+          "icon": "bot",
+          "color": "#34a853"
         },
         {
           "slug": "qa-gpt",
