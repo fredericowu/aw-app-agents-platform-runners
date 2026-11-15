@@ -28,6 +28,7 @@ def test_build_container_kwargs_for_agy(monkeypatch, tmp_path):
     monkeypatch.setenv("AW_WORKSPACE_HOST_DIR", "/host/workspace")
     monkeypatch.setenv("AW_WORKSPACE_HOME_HOST_DIR", "/host/home")
     monkeypatch.setattr(execute_mod, "WORKSPACE_HOST_DIR", "/host/workspace")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "/host/home")
     monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(tmp_path / "ws"))
     monkeypatch.setattr(execute_mod, "REAL_HOME", str(tmp_path / "home"))
 
@@ -76,6 +77,7 @@ def test_agy_resume_conversation(monkeypatch, tmp_path):
     monkeypatch.setenv("AW_WORKSPACE_HOST_DIR", "/host/workspace")
     monkeypatch.setenv("AW_WORKSPACE_HOME_HOST_DIR", "/host/home")
     monkeypatch.setattr(execute_mod, "WORKSPACE_HOST_DIR", "/host/workspace")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "/host/home")
     monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(tmp_path / "ws"))
     monkeypatch.setattr(execute_mod, "REAL_HOME", str(tmp_path / "home"))
 
