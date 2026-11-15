@@ -653,6 +653,17 @@ def main() -> int:
         # nothing else — codex's own turn.completed event is usage data, not
         # an end-of-stream marker, so the process exiting is what ends a turn.
         try:
+            quota = subprocess.run(
+                ["/usr/local/bin/aw-quota-report", "codex"],
+                capture_output=True, text=True, timeout=15, check=False,
+                env=env,
+            )
+            quota_line = quota.stdout.strip().splitlines()[-1] if quota.stdout.strip() else ""
+            if quota_line:
+                _publish_line(r, stream_key, run_id, quota_line)
+        except Exception as e:
+            print(f"aw-warm-relay-codex: quota report failed ({e})", file=sys.stderr)
+        try:
             r.xadd(stream_key, {"done": "1", "returncode": str(rc)},
                    maxlen=50_000, approximate=True)
             r.expire(stream_key, 86400)
