@@ -688,6 +688,38 @@ CLI_SPECS: dict[str, dict] = {
         "append_system_prompt_file_flag": None,
         "creds_dir": ".cursor", "creds_file": None,
     },
+    "agy": {
+        "bin": "agy", "subcmd": None, "prompt_flag": "-p",
+        "default_extra": ["--output-format", "stream-json"],
+        "skip_perms_flag": "--dangerously-skip-permissions",
+        "model_flag": "--model", "add_dir_flag": "--add-dir",
+        "mcp_config_flag": None,
+        "allowed_tools_flag": None,
+        "disallowed_tools_flag": None,
+        "tools_flag_style": None,
+        "append_system_prompt_flag": None,
+        "append_system_prompt_file_flag": None,
+        "env_token_auth": False,
+        "creds_dir": ".gemini", "creds_file": None,
+        "image_suffix": "gemini",
+        "mount_bin": ".aw-workspace/antigravity-cli/.local/bin/agy",
+    },
+    "antigravity": {
+        "bin": "agy", "subcmd": None, "prompt_flag": "-p",
+        "default_extra": ["--output-format", "stream-json"],
+        "skip_perms_flag": "--dangerously-skip-permissions",
+        "model_flag": "--model", "add_dir_flag": "--add-dir",
+        "mcp_config_flag": None,
+        "allowed_tools_flag": None,
+        "disallowed_tools_flag": None,
+        "tools_flag_style": None,
+        "append_system_prompt_flag": None,
+        "append_system_prompt_file_flag": None,
+        "env_token_auth": False,
+        "creds_dir": ".gemini", "creds_file": None,
+        "image_suffix": "gemini",
+        "mount_bin": ".aw-workspace/antigravity-cli/.local/bin/agy",
+    },
 }
 
 STREAM_MAXLEN = 50_000
@@ -2120,7 +2152,7 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     if cli not in CLI_SPECS:
         cli = "claude"
     spec = CLI_SPECS[cli]
-    image = f"{REGISTRY}/{IMAGE_PREFIX}-{cli}:{DEFAULT_TAG}"
+    image = f"{REGISTRY}/{IMAGE_PREFIX}-{spec.get('image_suffix', cli)}:{DEFAULT_TAG}"
 
     run_id = job["run_id"]
     session_id = job.get("session_id")
@@ -2487,6 +2519,10 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     # a command exactly what the permission just withheld.
     if WORKSPACE_HOST_DIR and _workspace_access():
         _mount("aw-workspace-cli", "/usr/local/bin/aw-workspace-cli", ro=True)
+    if WORKSPACE_HOST_DIR and spec.get("mount_bin"):
+        _mount(spec["mount_bin"], f"/usr/local/bin/{spec['bin']}", ro=True)
+        if spec["bin"] != "agy":
+            _mount(spec["mount_bin"], "/usr/local/bin/agy", ro=True)
 
     # Legacy skills mount intentionally REMOVED 2026-08-02 (Frederico): the
     # agent's real cwd is /opt/aw-workspace now — skills for this runner
@@ -2517,6 +2553,8 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
                      session_id])
     elif session_id and cli == "codex":
         argv.extend(["resume", session_id])
+    elif session_id and cli in ("agy", "antigravity"):
+        argv.extend(["--conversation", session_id])
 
     prompt = job.get("prompt") or ""
     # A CLI with no --append-system-prompt equivalent (codex) would otherwise
@@ -2732,71 +2770,95 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
                     pass
         except Exception:
             log.exception("execute: could not prepare codex home %s", _home_abs)
-        if cli == "codex":
-            # Content/timestamp-aware, flock-guarded — see the function's own
-            # docstring for why the old "copy only if missing" guard left a
-            # revoked token stuck forever. Runs here (host-side, Python) so
-            # it covers BOTH the cold path AND warm codex containers, which
-            # build their kwargs by calling this same function first.
-            _resync_shared_cli_home_auth(_home_abs, creds_copy)
-            # Unlike auth.json, config.toml is only ever copied into the
-            # shared home ONCE (see the "cp -a" guard below) — an already
-            # populated shared home (any codex run before this fix shipped)
-            # would otherwise never pick up the warm-token header patch.
-            # Idempotent, so cheap to re-check on every spawn.
-            if (_home_abs / "config.toml").is_file():
-                _patch_codex_warm_token_headers(_home_abs / "config.toml")
-            else:
-                # The "cp -a /aw-creds/." below is guarded on config.toml, and
-                # the per-run override mounted at the end of this branch makes
-                # that guard read TRUE unconditionally — so a never-populated
-                # shared home would silently never get the rest of the staged
-                # creds. Do that first-populate here instead, host-side, with
-                # the same source and the same "only when config.toml is
-                # missing" condition the shell had.
+        if cli in ("agy", "antigravity"):
+            _tok = _home_abs / "antigravity-cli" / "antigravity-oauth-token"
+            if not _tok.is_file():
                 try:
                     shutil.copytree(creds_copy, _home_abs, dirs_exist_ok=True)
                 except Exception:
-                    log.warning("execute: could not populate codex home %s from "
-                                "the staged creds", _home_abs, exc_info=True)
-        staged_home = f"/aw-{creds_dir.lstrip('.')}-home"
-        _mount(_home_rel, staged_home, ro=False)
-        if cli == "codex":
-            # THE agent-scoping fix (2026-09-08). Everything above hands codex
-            # the ONE config.toml every codex agent shares, whose single
-            # `aw-gateway` entry is the gateway's unscoped root — so an agent
-            # config naming only a scoped profile got the whole gateway anyway.
-            # Render this job's OWN servers over that base and bind the result
-            # read-only across the shared copy: a single FILE, deliberately,
-            # not a repointed $CODEX_HOME — auth.json, the rollouts and
-            # state_*.sqlite all live in that same dir and codex loses its
-            # login (and every resumable thread) the moment they move.
-            # Fail CLOSED (2026-10-30): this used to catch-and-log and let
-            # the run proceed against the shared, unscoped config.toml —
-            # exactly the behaviour of every run before the 2026-09-08 fix.
-            # That silent widening is the failure mode this whole card
-            # exists to remove; a run that cannot prove its scope must not
-            # spawn at all. _render_scoped_codex_config_or_raise raises
-            # CodexScopeRenderError, which propagates out of this function
-            # to its callers' `except Exception` spawn-error handling.
-            _rendered = isolated_host_dir / "codex-config.toml"
-            _render_scoped_codex_config_or_raise(
-                run_id=run_id, rendered_path=_rendered,
-                base_config_path=_home_abs / "config.toml",
-                mcp_servers=mcp_servers)
-            _mount_abs(f"{_host_creds}/codex-config.toml",
-                       f"{staged_home}/config.toml", ro=True)
-        if spec.get("home_env"):
-            env[spec["home_env"]] = staged_home
-        _inner = " ".join(shlex.quote(a) for a in argv)
-        # auth.json itself is resynced host-side above, before this shell
-        # ever runs. This cp only backfills the REST of the staged creds
-        # (config.toml etc.) the first time the shared home is populated —
-        # guarded on config.toml specifically (not auth.json) so a later
-        # spawn never re-touches the auth.json this same block just synced.
-        argv = ["sh", "-lc",
-                f'[ -f {staged_home}/config.toml ] || cp -a /aw-creds/. {staged_home}/ 2>/dev/null; '
-                f'chmod -R u+rwX {staged_home} 2>/dev/null; exec {_inner}']
+                    log.warning("execute: could not populate gemini home %s from staged creds",
+                                _home_abs, exc_info=True)
+            else:
+                _src_tok = creds_copy / "antigravity-cli" / "antigravity-oauth-token"
+                if _src_tok.is_file():
+                    try:
+                        if _tok.read_bytes() != _src_tok.read_bytes():
+                            _tok.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(_src_tok, _tok)
+                    except Exception:
+                        pass
+            staged_home = "/home/ubuntu/.gemini"
+            _mount(_home_rel, staged_home, ro=False)
+            _inner = " ".join(shlex.quote(a) for a in argv)
+            argv = ["sh", "-lc",
+                    f'[ -f {staged_home}/antigravity-cli/antigravity-oauth-token ] || cp -a /aw-creds/. {staged_home}/ 2>/dev/null; '
+                    f'chmod -R u+rwX {staged_home} 2>/dev/null; exec {_inner}']
+        else:
+            if cli == "codex":
+                # Content/timestamp-aware, flock-guarded — see the function's own
+                # docstring for why the old "copy only if missing" guard left a
+                # revoked token stuck forever. Runs here (host-side, Python) so
+                # it covers BOTH the cold path AND warm codex containers, which
+                # build their kwargs by calling this same function first.
+                _resync_shared_cli_home_auth(_home_abs, creds_copy)
+                # Unlike auth.json, config.toml is only ever copied into the
+                # shared home ONCE (see the "cp -a" guard below) — an already
+                # populated shared home (any codex run before this fix shipped)
+                # would otherwise never pick up the warm-token header patch.
+                # Idempotent, so cheap to re-check on every spawn.
+                if (_home_abs / "config.toml").is_file():
+                    _patch_codex_warm_token_headers(_home_abs / "config.toml")
+                else:
+                    # The "cp -a /aw-creds/." below is guarded on config.toml, and
+                    # the per-run override mounted at the end of this branch makes
+                    # that guard read TRUE unconditionally — so a never-populated
+                    # shared home would silently never get the rest of the staged
+                    # creds. Do that first-populate here instead, host-side, with
+                    # the same source and the same "only when config.toml is
+                    # missing" condition the shell had.
+                    try:
+                        shutil.copytree(creds_copy, _home_abs, dirs_exist_ok=True)
+                    except Exception:
+                        log.warning("execute: could not populate codex home %s from "
+                                    "the staged creds", _home_abs, exc_info=True)
+            staged_home = f"/aw-{creds_dir.lstrip('.')}-home"
+            _mount(_home_rel, staged_home, ro=False)
+            if cli == "codex":
+                # THE agent-scoping fix (2026-09-08). Everything above hands codex
+                # the ONE config.toml every codex agent shares, whose single
+                # `aw-gateway` entry is the gateway's unscoped root — so an agent
+                # config naming only a scoped profile got the whole gateway anyway.
+                # Render this job's OWN servers over that base and bind the result
+                # read-only across the shared copy: a single FILE, deliberately,
+                # not a repointed $CODEX_HOME — auth.json, the rollouts and
+                # state_*.sqlite all live in that same dir and codex loses its
+                # login (and every resumable thread) the moment they move.
+                # Fail CLOSED (2026-10-30): this used to catch-and-log and let
+                # the run proceed against the shared, unscoped config.toml —
+                # exactly the behaviour of every run before the 2026-09-08 fix.
+                # That silent widening is the failure mode this whole card
+                # exists to remove; a run that cannot prove its scope must not
+                # spawn at all. _render_scoped_codex_config_or_raise raises
+                # CodexScopeRenderError, which propagates out of this function
+                # to its callers' `except Exception` spawn-error handling.
+                _rendered = isolated_host_dir / "codex-config.toml"
+                _render_scoped_codex_config_or_raise(
+                    run_id=run_id, rendered_path=_rendered,
+                    base_config_path=_home_abs / "config.toml",
+                    mcp_servers=mcp_servers)
+                _mount_abs(f"{_host_creds}/codex-config.toml",
+                           f"{staged_home}/config.toml", ro=True)
+            if spec.get("home_env"):
+                env[spec["home_env"]] = staged_home
+            _inner = " ".join(shlex.quote(a) for a in argv)
+            # auth.json itself is resynced host-side above, before this shell
+            # ever runs. This cp only backfills the REST of the staged creds
+            # (config.toml etc.) the first time the shared home is populated —
+            # guarded on config.toml specifically (not auth.json) so a later
+            # spawn never re-touches the auth.json this same block just synced.
+            argv = ["sh", "-lc",
+                    f'[ -f {staged_home}/config.toml ] || cp -a /aw-creds/. {staged_home}/ 2>/dev/null; '
+                    f'chmod -R u+rwX {staged_home} 2>/dev/null; exec {_inner}']
 
     kwargs: dict[str, Any] = {
         "name": f"aw-runner-run-{run_id}",

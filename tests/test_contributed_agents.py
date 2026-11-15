@@ -25,7 +25,8 @@ APP_DIR = Path(__file__).resolve().parents[1]
 #: share this family's MCP-gateway contract — skill_slugs/agent_config_slug
 #: are how the Telegram agents reach tools, not a rule every agent follows.
 TELEGRAM_AGENT_SLUGS = {"telegram-sonnet", "telegram-opus", "telegram-haiku",
-                        "telegram-fable", "telegram-gpt-5-6-sol"}
+                        "telegram-fable", "telegram-gpt-5-6-sol",
+                        "telegram-gemini-flash", "telegram-antigravity"}
 
 
 @pytest.fixture(scope="module")
@@ -77,6 +78,21 @@ def test_declares_gpt_5_6_sol_for_the_codex_runner(spec):
         "dangerous_skip_permissions": True,
         "timeout_s": 900,
     }
+
+
+def test_declares_antigravity_runner_models(spec):
+    models = {model["slug"]: model for model in spec["models"]}
+    assert "antigravity-runner-gemini-3-8-flash-high" in models
+    model = models["antigravity-runner-gemini-3-8-flash-high"]
+    assert model["provider"] == "runner"
+    assert model["params"] == {
+        "runner": "aw-agy",
+        "cli": "agy",
+        "model": "gemini-3.8-flash-high",
+        "dangerous_skip_permissions": True,
+        "timeout_s": 900,
+    }
+    assert "antigravity-runner-gemini-flash" in models
 
 
 def test_every_agent_uses_the_shared_contract_and_prompt(spec):
