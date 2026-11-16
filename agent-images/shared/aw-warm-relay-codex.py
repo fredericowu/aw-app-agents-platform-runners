@@ -68,6 +68,13 @@ except Exception as _e:  # pragma: no cover - depends on the mount
     print(f"aw-warm-relay-codex: aw_attach unavailable ({_e}) — no attach rewriting",
           file=sys.stderr)
 
+try:
+    from aw_codex_usage import CodexTurnUsageCapture  # type: ignore
+except Exception as _e:  # pragma: no cover - depends on the mount
+    CodexTurnUsageCapture = None
+    print(f"aw-warm-relay-codex: usage capture unavailable ({_e})",
+          file=sys.stderr)
+
 
 def _read(path: str, default: str = "") -> str:
     try:
@@ -359,7 +366,8 @@ def _cooldown_wait(r, stream_key: str, run_id: str) -> None:
               file=sys.stderr)
 
 
-def _run_codex_turn(argv: list, cwd: str, env: dict, r, stream_key: str, run_id: str
+def _run_codex_turn(argv: list, cwd: str, env: dict, r, stream_key: str, run_id: str,
+                     usage_capture=None,
                      ) -> tuple[int, int, str, bool]:
     """Run one `codex exec resume` subprocess, retrying an attempt that never
     produced a line of real turn content — whether it hit the known "no
@@ -441,6 +449,8 @@ def _run_codex_turn(argv: list, cwd: str, env: dict, r, stream_key: str, run_id:
             out_line = out_line.rstrip("\n")
             if not out_line:
                 continue
+            if source == "stdout" and usage_capture is not None:
+                usage_capture.observe_cli_line(out_line)
             last_tail.append(out_line)
             if any(sig in out_line for sig in _AUTH_REVOKED_SIGNATURES):
                 auth_revoked = True
@@ -632,8 +642,14 @@ def main() -> int:
         turn_started = time.monotonic()
         _diag(codex_home, "resume_start", session_id=session_id, run_id=run_id,
               codex_version=codex_version, agent_tag=agent_tag)
+        usage_capture = (CodexTurnUsageCapture(codex_home, session_id)
+                         if CodexTurnUsageCapture is not None else None)
         rc, attempts, tail_text, auth_revoked = _run_codex_turn(
-            argv, cwd, env, r, stream_key, run_id)
+            argv, cwd, env, r, stream_key, run_id, usage_capture=usage_capture)
+        if usage_capture is not None:
+            usage_event = usage_capture.event()
+            if usage_event is not None:
+                _publish_line(r, stream_key, run_id, json.dumps(usage_event))
         _diag(codex_home, "resume_end", session_id=session_id, run_id=run_id,
               rc=rc, duration_s=round(time.monotonic() - turn_started, 3),
               attempts=attempts, is_rollout_error=_ROLLOUT_ERROR_SIGNATURE in tail_text,
