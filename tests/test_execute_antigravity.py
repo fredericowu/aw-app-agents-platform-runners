@@ -24,7 +24,13 @@ def test_agy_in_cli_specs():
     assert spec["image_suffix"] == "gemini"
 
 
-def test_build_container_kwargs_for_agy(monkeypatch, tmp_path):
+@pytest.mark.parametrize("model", [
+    "gemini-3.8-flash-high",
+    "claude-opus-5-5-high",
+    "claude-sonnet-5-5-low",
+    "gpt-oss-120b-medium",
+])
+def test_build_container_kwargs_for_agy(monkeypatch, tmp_path, model):
     monkeypatch.setenv("AW_WORKSPACE_HOST_DIR", "/host/workspace")
     monkeypatch.setenv("AW_WORKSPACE_HOME_HOST_DIR", "/host/home")
     monkeypatch.setattr(execute_mod, "WORKSPACE_HOST_DIR", "/host/workspace")
@@ -45,7 +51,7 @@ def test_build_container_kwargs_for_agy(monkeypatch, tmp_path):
         "run_id": "test-agy-run-1",
         "cli": "agy",
         "prompt": "write a function",
-        "model": "gemini-3.8-flash-high",
+        "model": model,
         "dangerous_skip_permissions": True,
         "permissions": {"workspace_access": True},
     }
@@ -61,7 +67,7 @@ def test_build_container_kwargs_for_agy(monkeypatch, tmp_path):
     shell_script = cmd[2]
     assert "/home/ubuntu/.gemini" in shell_script
     assert "agy" in shell_script
-    assert "gemini-3.8-flash-high" in shell_script
+    assert f"--model {model}" in shell_script
 
     # Verify mounts
     volumes = kwargs["volumes"]
