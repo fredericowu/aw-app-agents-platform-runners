@@ -1065,6 +1065,50 @@
           "color": "#34a853"
         },
         {
+          "slug": "telegram-agy-sonnet",
+          "name": "Telegram - AGY - Sonnet",
+          "workspace_qualified": true,
+          "description": "The Antigravity-backed Telegram variant powered by Claude Sonnet 5.5, for fast, capable replies and coding from the phone.",
+          "system_prompt_file": "prompts/telegram.md",
+          "model_slug": "agy-runner-claude-sonnet-5-5-high",
+          "agent_config_slug": "agent-config-aw-full",
+          "skill_slugs": [
+            "aw-agent-telegram"
+          ],
+          "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
+          "use_cases": [
+            "reply to a Telegram message with Claude Sonnet 5.5",
+            "run a task from the phone with Antigravity Sonnet",
+            "use Claude Sonnet through a Telegram conversation via AGY"
+          ],
+          "hidden_from_flow": false,
+          "disable_harness_tools": true,
+          "icon": "bot",
+          "color": "#d97757"
+        },
+        {
+          "slug": "telegram-agy-opus",
+          "name": "Telegram - AGY - Opus",
+          "workspace_qualified": true,
+          "description": "The Antigravity-backed Telegram variant powered by Claude Opus 5.5, for high-capability reasoning and coding from the phone.",
+          "system_prompt_file": "prompts/telegram.md",
+          "model_slug": "agy-runner-claude-opus-5-5-high",
+          "agent_config_slug": "agent-config-aw-full",
+          "skill_slugs": [
+            "aw-agent-telegram"
+          ],
+          "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
+          "use_cases": [
+            "reply to a Telegram message with Claude Opus 5.5",
+            "run a complex task from the phone with Antigravity Opus",
+            "use Claude Opus through a Telegram conversation via AGY"
+          ],
+          "hidden_from_flow": false,
+          "disable_harness_tools": true,
+          "icon": "bot",
+          "color": "#b5532f"
+        },
+        {
           "slug": "telegram-argon",
           "name": "Telegram - Argon",
           "workspace_qualified": true,
