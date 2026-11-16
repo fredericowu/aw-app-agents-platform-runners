@@ -26,7 +26,7 @@ APP_DIR = Path(__file__).resolve().parents[1]
 #: are how the Telegram agents reach tools, not a rule every agent follows.
 TELEGRAM_AGENT_SLUGS = {"telegram-sonnet", "telegram-opus", "telegram-haiku",
                         "telegram-fable", "telegram-gpt-5-6-sol",
-                        "telegram-gemini-flash", "telegram-antigravity"}
+                        "telegram-flash", "telegram-hydrogen", "telegram-argon"}
 
 
 @pytest.fixture(scope="module")
@@ -93,6 +93,31 @@ def test_declares_antigravity_runner_models(spec):
         "timeout_s": 900,
     }
     assert "antigravity-runner-gemini-flash" in models
+    for slug, model_id in (
+        ("agy-runner-gemini-4-hydrogen-high", "gemini-4-hydrogen-high"),
+        ("agy-runner-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-xhigh"),
+        ("agy-runner-gemini-4-hydrogen-medium", "gemini-4-hydrogen-medium"),
+        ("agy-runner-gemini-4-hydrogen-low", "gemini-4-hydrogen-low"),
+        ("agy-runner-gemini-4-argon-high", "gemini-4-argon-high"),
+        ("agy-runner-gemini-4-argon-medium", "gemini-4-argon-medium"),
+        ("agy-runner-gemini-4-argon-low", "gemini-4-argon-low"),
+    ):
+        assert slug in models
+        assert models[slug]["provider"] == "runner"
+        assert models[slug]["params"]["cli"] == "agy"
+        assert models[slug]["params"]["runner"] == "aw-agy"
+        assert models[slug]["params"]["model"] == model_id
+
+
+def test_telegram_agents_are_workspace_qualified(spec):
+    """Every Telegram agent must carry `workspace_qualified: true` so
+    aw-workspace's `qualify_workspace_agents()` gives each workspace its own
+    `[<workspace>] Telegram - ...` row instead of colliding on one shared slug.
+    """
+    for agent in spec["agents"]:
+        if agent["slug"] not in TELEGRAM_AGENT_SLUGS:
+            continue
+        assert agent.get("workspace_qualified") is True, agent["slug"]
 
 
 def test_every_agent_uses_the_shared_contract_and_prompt(spec):
@@ -217,26 +242,11 @@ def test_no_declaration_ships_a_credential(spec):
 
 
 def test_no_declaration_ships_a_key_nothing_reads(spec):
-    """`workspace_qualified: true` sat on all five of these agents from
-    206b95b until it was removed. Nothing in either repo ever read it.
-
-    That commit's message claimed activation "derives a per-workspace
-    slug/name ... via `qualify_workspace_agents()`" — a function that has
-    never existed anywhere in the tree. A key that reads as implemented and
-    is not is worse than no key at all: it is a wrong answer to "is this
-    already handled?", and it was believed once already during the debugging
-    of the Telegram cross-workspace dispatch bug.
-
-    Note `workspace` itself is NOT dead — `AgentIn.workspace` landed in
-    agents-platform-multitenant c0094d6 as a per-agent DEFAULT, and the
-    provisioner's allowlist carries it on purpose (see
-    test_agent_provisioner.py::test_workspace_survives_the_create_post). It
-    is the weakest input to the override: an Agent row is seeded once per
-    TENANT, so it cannot distinguish two workspaces of one account. The
-    channel's answer (`TelegramBot.workspace` -> `Run.workspace`, inherited
-    by child runs) wins over it.
+    """Guard against manifest keys that nothing reads (e.g. a key left behind
+    after its consumer was removed). Note `workspace_qualified` IS read by
+    aw-workspace's `src/apps/agents.py::qualify_workspace_agents`.
     """
-    dead_keys = {"workspace_qualified"}
+    dead_keys: set[str] = set()
     for key_path, _ in _walk(spec):
         leaf = key_path.rsplit(".", 1)[-1].split("[")[0]
         assert leaf not in dead_keys, (

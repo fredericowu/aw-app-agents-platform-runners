@@ -248,6 +248,97 @@
           }
         },
         {
+          "slug": "agy-runner-gemini-4-hydrogen-high",
+          "provider": "runner",
+          "model_id": "agy-runner-gemini-4-hydrogen-high",
+          "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen High)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-4-hydrogen-high",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-gemini-4-hydrogen-xhigh",
+          "provider": "runner",
+          "model_id": "agy-runner-gemini-4-hydrogen-xhigh",
+          "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen XHigh)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-4-hydrogen-xhigh",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-gemini-4-hydrogen-medium",
+          "provider": "runner",
+          "model_id": "agy-runner-gemini-4-hydrogen-medium",
+          "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen Medium)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-4-hydrogen-medium",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-gemini-4-hydrogen-low",
+          "provider": "runner",
+          "model_id": "agy-runner-gemini-4-hydrogen-low",
+          "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen Low)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-4-hydrogen-low",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-gemini-4-argon-high",
+          "provider": "runner",
+          "model_id": "agy-runner-gemini-4-argon-high",
+          "display_name": "Antigravity (aw Runner, Gemini 4 Argon High)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-4-argon-high",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-gemini-4-argon-medium",
+          "provider": "runner",
+          "model_id": "agy-runner-gemini-4-argon-medium",
+          "display_name": "Antigravity (aw Runner, Gemini 4 Argon Medium)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-4-argon-medium",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-gemini-4-argon-low",
+          "provider": "runner",
+          "model_id": "agy-runner-gemini-4-argon-low",
+          "display_name": "Antigravity (aw Runner, Gemini 4 Argon Low)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gemini-4-argon-low",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
           "slug": "claude-runner-sonnet",
           "provider": "runner",
           "model_id": "claude-runner-sonnet",
@@ -731,6 +822,7 @@
         {
           "slug": "telegram-sonnet",
           "name": "Telegram - Sonnet",
+          "workspace_qualified": true,
           "description": "The default Telegram agent. Reach for this unless the conversation specifically wants a cheaper or a deeper model.",
           "system_prompt_file": "prompts/telegram.md",
           "model_slug": "claude-runner-sonnet",
@@ -752,6 +844,7 @@
         {
           "slug": "telegram-opus",
           "name": "Telegram - Opus",
+          "workspace_qualified": true,
           "description": "The deep one, for a conversation that is really a piece of work \u2014 an investigation, a multi-step change driven from the phone.",
           "system_prompt_file": "prompts/telegram.md",
           "model_slug": "claude-runner-opus",
@@ -773,6 +866,7 @@
         {
           "slug": "telegram-haiku",
           "name": "Telegram - Haiku",
+          "workspace_qualified": true,
           "description": "The cheap pass, for short exchanges where the answer is a fact rather than a judgement.",
           "system_prompt_file": "prompts/telegram.md",
           "model_slug": "claude-runner-haiku",
@@ -794,6 +888,7 @@
         {
           "slug": "telegram-fable",
           "name": "Telegram - Fable",
+          "workspace_qualified": true,
           "description": "The Fable variant, for conversations where tone and phrasing matter as much as the answer.",
           "system_prompt_file": "prompts/telegram.md",
           "model_slug": "claude-runner-fable",
@@ -815,6 +910,7 @@
         {
           "slug": "telegram-gpt-5-6-sol",
           "name": "Telegram - GPT-5.6 Sol",
+          "workspace_qualified": true,
           "description": "The Codex-backed Telegram variant, for coding and other agentic work that benefits from GPT-5.6 Sol while staying reachable from the phone.",
           "system_prompt_file": "prompts/telegram.md",
           "model_slug": "codex-runner-gpt-5-6-sol",
@@ -834,8 +930,9 @@
           "color": "#ffa657"
         },
         {
-          "slug": "telegram-gemini-flash",
-          "name": "Telegram - Gemini Flash",
+          "slug": "telegram-flash",
+          "name": "Telegram - Flash",
+          "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant, for fast and intelligent conversations powered by Google Gemini 3.8 Flash while staying reachable from the phone.",
           "system_prompt_file": "prompts/telegram.md",
           "model_slug": "antigravity-runner-gemini-3-8-flash-high",
@@ -846,8 +943,8 @@
           "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
           "use_cases": [
             "reply to a Telegram message with Gemini 3.8 Flash",
-            "run a task from the phone with Antigravity",
-            "use Gemini through a Telegram conversation"
+            "run a task from the phone with Antigravity Flash",
+            "use Gemini Flash through a Telegram conversation"
           ],
           "hidden_from_flow": false,
           "disable_harness_tools": true,
@@ -855,25 +952,48 @@
           "color": "#4285f4"
         },
         {
-          "slug": "telegram-antigravity",
-          "name": "Telegram - Antigravity",
-          "description": "The Google Antigravity-backed Telegram variant, providing conversational access to Google's cutting-edge models from Telegram.",
+          "slug": "telegram-hydrogen",
+          "name": "Telegram - Hydrogen",
+          "workspace_qualified": true,
+          "description": "The Antigravity-backed Telegram variant powered by Google Gemini 4 Hydrogen, for high-capability reasoning and coding from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "antigravity-runner-gemini-flash",
+          "model_slug": "agy-runner-gemini-4-hydrogen-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
           ],
           "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
           "use_cases": [
-            "reply to a Telegram message with Antigravity",
-            "run a task from the phone using Google models",
-            "chat with Gemini via Antigravity on Telegram"
+            "reply to a Telegram message with Gemini 4 Hydrogen",
+            "run a complex task from the phone with Antigravity Hydrogen",
+            "use Gemini 4 Hydrogen through a Telegram conversation"
           ],
           "hidden_from_flow": false,
           "disable_harness_tools": true,
           "icon": "bot",
           "color": "#34a853"
+        },
+        {
+          "slug": "telegram-argon",
+          "name": "Telegram - Argon",
+          "workspace_qualified": true,
+          "description": "The Antigravity-backed Telegram variant powered by Google Gemini 4 Argon, for balanced capability and speed from the phone.",
+          "system_prompt_file": "prompts/telegram.md",
+          "model_slug": "agy-runner-gemini-4-argon-high",
+          "agent_config_slug": "agent-config-aw-full",
+          "skill_slugs": [
+            "aw-agent-telegram"
+          ],
+          "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
+          "use_cases": [
+            "reply to a Telegram message with Gemini 4 Argon",
+            "run a task from the phone with Antigravity Argon",
+            "use Gemini 4 Argon through a Telegram conversation"
+          ],
+          "hidden_from_flow": false,
+          "disable_harness_tools": true,
+          "icon": "bot",
+          "color": "#fbbc04"
         },
         {
           "slug": "qa-gpt",
