@@ -26,7 +26,8 @@ APP_DIR = Path(__file__).resolve().parents[1]
 #: are how the Telegram agents reach tools, not a rule every agent follows.
 TELEGRAM_AGENT_SLUGS = {"telegram-sonnet", "telegram-opus", "telegram-haiku",
                         "telegram-fable", "telegram-gpt-5-6-sol",
-                        "telegram-flash", "telegram-hydrogen", "telegram-argon"}
+                        "telegram-flash", "telegram-hydrogen", "telegram-argon",
+                        "telegram-agy-sonnet", "telegram-agy-opus"}
 
 
 @pytest.fixture(scope="module")
