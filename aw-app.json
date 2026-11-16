@@ -339,6 +339,97 @@
           }
         },
         {
+          "slug": "agy-runner-claude-opus-5-5-low",
+          "provider": "runner",
+          "model_id": "agy-runner-claude-opus-5-5-low",
+          "display_name": "Antigravity (aw Runner, Claude Opus 5.5 Low)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "claude-opus-5-5-low",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-claude-opus-5-5-medium",
+          "provider": "runner",
+          "model_id": "agy-runner-claude-opus-5-5-medium",
+          "display_name": "Antigravity (aw Runner, Claude Opus 5.5 Medium)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "claude-opus-5-5-medium",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-claude-opus-5-5-high",
+          "provider": "runner",
+          "model_id": "agy-runner-claude-opus-5-5-high",
+          "display_name": "Antigravity (aw Runner, Claude Opus 5.5 High)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "claude-opus-5-5-high",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-claude-sonnet-5-5-low",
+          "provider": "runner",
+          "model_id": "agy-runner-claude-sonnet-5-5-low",
+          "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 Low)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "claude-sonnet-5-5-low",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-claude-sonnet-5-5-medium",
+          "provider": "runner",
+          "model_id": "agy-runner-claude-sonnet-5-5-medium",
+          "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 Medium)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "claude-sonnet-5-5-medium",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-claude-sonnet-5-5-high",
+          "provider": "runner",
+          "model_id": "agy-runner-claude-sonnet-5-5-high",
+          "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 High)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "claude-sonnet-5-5-high",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "agy-runner-gpt-oss-120b-medium",
+          "provider": "runner",
+          "model_id": "agy-runner-gpt-oss-120b-medium",
+          "display_name": "Antigravity (aw Runner, GPT-OSS 120B Medium)",
+          "params": {
+            "runner": "aw-agy",
+            "cli": "agy",
+            "model": "gpt-oss-120b-medium",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
           "slug": "claude-runner-sonnet",
           "provider": "runner",
           "model_id": "claude-runner-sonnet",
