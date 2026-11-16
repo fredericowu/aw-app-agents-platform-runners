@@ -80,6 +80,7 @@ from typing import Any
 
 from . import execution_index
 from . import warm_pool
+from .codex_usage import CodexTurnUsageCapture
 
 log = logging.getLogger("aw_apps.agents_platform_runners.execute")
 
@@ -1070,6 +1071,7 @@ def _sleep_abortable(r, run_id: str, seconds: float, slice_s: float = 1.0) -> bo
 
 
 def _stream_cold_attempt(container, r, run_id: str, codex_retryable: bool,
+                          usage_capture: CodexTurnUsageCapture | None = None,
                           is_last_attempt: bool = False) -> tuple[int, str | None]:
     """Stream one cold container's log output, publishing complete lines to
     the run's Redis stream. Returns (returncode, reason) where reason is
@@ -1167,6 +1169,8 @@ def _stream_cold_attempt(container, r, run_id: str, codex_retryable: bool,
                 line, buf = buf.split("\n", 1)
                 if not line.strip():
                     continue
+                if usage_capture is not None:
+                    usage_capture.observe_cli_line(line)
                 if not auth_revoked_logged and any(
                         sig in line for sig in _CODEX_AUTH_REVOKED_SIGNATURES):
                     auth_revoked_logged = True
@@ -1231,7 +1235,8 @@ def _stream_cold_attempt(container, r, run_id: str, codex_retryable: bool,
 
 
 def _run_cold_agent_with_retry(client, image, kwargs: dict, container, run_id: str, r,
-                                codex_retryable: bool) -> int:
+                                codex_retryable: bool,
+                                usage_capture: CodexTurnUsageCapture | None = None) -> int:
     """Own the cold-path attempt loop: stream `container` (already spawned
     by the caller for attempt 1), and on a retryable hit (_stream_cold_attempt
     returning reason "contention" or "rate_limit") respawn a fresh container
@@ -1318,7 +1323,8 @@ def _run_cold_agent_with_retry(client, image, kwargs: dict, container, run_id: s
 
         try:
             returncode, reason = _stream_cold_attempt(
-                container, r, run_id, codex_retryable, is_last_attempt=(attempt == max_attempts))
+                container, r, run_id, codex_retryable, usage_capture,
+                is_last_attempt=(attempt == max_attempts))
         except Exception:
             log.exception("execute: log-stream failed run=%s", run_id)
             return 1
@@ -2960,6 +2966,7 @@ WARM_RELAY_PATH = _SHARED_DIR / "aw-warm-relay.py"
 WARM_WRAPPER_CODEX_PATH = _SHARED_DIR / "aw-warm-wrapper-codex"
 WARM_RELAY_CODEX_PATH = _SHARED_DIR / "aw-warm-relay-codex.py"
 ATTACH_HELPER_PATH = _SHARED_DIR / "aw_attach.py"
+CODEX_USAGE_HELPER_PATH = Path(__file__).resolve().parent / "codex_usage.py"
 # Run-id/session-id/card provenance hook (card 40f5bf3b-9510-811d-916c-
 # dd2ad57d3ac4) — see agent-images/shared/git-hooks/ and this constant's
 # call sites in _build_container_kwargs/_build_raw_kwargs above.
@@ -3123,6 +3130,7 @@ def _build_warm_kwargs_codex(job: dict, epoch_hash: str, redis_url: str, client=
     volumes[_host_path_for(WARM_WRAPPER_CODEX_PATH)] = {"bind": "/usr/local/bin/aw-warm-wrapper-codex", "mode": "ro"}
     volumes[_host_path_for(WARM_RELAY_CODEX_PATH)] = {"bind": "/usr/local/bin/aw-warm-relay-codex.py", "mode": "ro"}
     volumes[_host_path_for(ATTACH_HELPER_PATH)] = {"bind": "/usr/local/bin/aw_attach.py", "mode": "ro"}
+    volumes[_host_path_for(CODEX_USAGE_HELPER_PATH)] = {"bind": "/usr/local/bin/aw_codex_usage.py", "mode": "ro"}
     kwargs["volumes"] = volumes
 
     env = dict(kwargs.get("environment") or {})
@@ -3695,6 +3703,14 @@ def _run_job_blocking(job: dict, redis_url: str) -> None:
     so the HTTP response returns immediately after the container is
     launched, matching RunnerLLM's "trigger then attach" contract."""
     run_id = job["run_id"]
+    cli = job.get("cli") or "claude"
+    usage_capture = None
+    if cli == "codex" and not job.get("raw_command"):
+        spec = CLI_SPECS["codex"]
+        codex_home = Path(WORKSPACE_CONTAINER_DIR) / _cli_home_rel(spec["creds_dir"])
+        # Snapshot before the container can append anything.  On a new
+        # thread observe_cli_line() learns the id from thread.started later.
+        usage_capture = CodexTurnUsageCapture(codex_home, job.get("session_id"))
     r = None
     try:
         r = _redis_client(redis_url)
@@ -3972,11 +3988,13 @@ def _run_job_blocking(job: dict, redis_url: str) -> None:
     # above): only codex jobs get more than one attempt, and only a doomed
     # attempt (the contention error arrives before any real content — no
     # thread.started, nothing else) is retried — see _run_cold_agent_with_retry.
-    cli = job.get("cli") or "claude"
     codex_retryable = cli == "codex" and not job.get("raw_command")
     returncode = 1
     try:
-        returncode = _run_cold_agent_with_retry(client, image, kwargs, container, run_id, r, codex_retryable)
+        returncode = _run_cold_agent_with_retry(
+            client, image, kwargs, container, run_id, r, codex_retryable,
+            usage_capture=usage_capture,
+        )
     except Exception:
         log.exception("execute: log-stream failed run=%s", run_id)
     finally:
@@ -3988,6 +4006,10 @@ def _run_job_blocking(job: dict, redis_url: str) -> None:
         # kill timer. See card 3d15bf3b-9510-8164-95c8-d1c26da0df00.
         if kill_timer:
             kill_timer.cancel()
+        if usage_capture is not None:
+            usage_event = usage_capture.event()
+            if usage_event is not None:
+                _publish_line(r, run_id, json.dumps(usage_event))
         _publish_done(r, run_id, returncode)
         execution_index.start(run_id)
         _forget_run(r, run_id)
