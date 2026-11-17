@@ -596,6 +596,10 @@ async def _list_tools() -> list[Tool]:
                           "properties": {"slug": {"type": "string"}},
                           "required": ["slug"]}),
 
+        Tool(name="get_group_default",
+             description="Read a group's saved default for this workspace. Unset returns agent_slug=null; no arbitrary fallback.",
+             inputSchema={"type": "object", "properties": {"group_slug": {"type": "string"}},
+                          "required": ["group_slug"]}),
         # ----- execution -----
         Tool(name="run_agent_async",
              description=("Start an agent run in the background and return its run_id. "
@@ -623,9 +627,11 @@ async def _list_tools() -> list[Tool]:
                           "`get_run`). A `run_agent_async` call that TIMED OUT on your side "
                           "may well have landed, so check `list_target_runs` before composing "
                           "a second dispatch. Use `qa_rerun:true` only to override "
-                          "deliberately."),
+                          "deliberately. Pass group_slug to resolve its saved workspace default; "
+                          "an explicit slug overrides the default and must be a member of that group."),
              inputSchema={"type": "object",
                           "properties": {"slug": {"type": "string"},
+                                         "group_slug": {"type": "string"},
                                          "input": {"type": "string"},
                                          "target_slug": {"type": "string",
                                                          "description": "Slug of the Target this run is delivering against. REQUIRED."},
@@ -640,7 +646,8 @@ async def _list_tools() -> list[Tool]:
                                                              "description": "Optional session_id to redirect the callback to instead of your own session — e.g. a session_id returned by a prior run_agent_async call. That session's agent gets woken with this run's result instead of you."},
                                          "qa_rerun": {"type": "boolean", "default": False,
                                                       "description": "Override the server-side QA dedup guard (see above), which otherwise 409s a second qa-* dispatch for the same card/target. Use it when new commits merged AFTER the prior verdict and the delivery genuinely needs re-verifying, or to run a deliberate second QA in parallel (e.g. a different model). Do NOT use it to retry a dispatch you think failed — a 409 means one already exists, so read that run instead."}},
-                          "required": ["slug", "input", "target_slug"]}),
+                          "required": ["input", "target_slug"],
+                          "anyOf": [{"required": ["slug"]}, {"required": ["group_slug"]}]}),
         Tool(name="run_workflow_async",
              description=("Start a workflow run in the background and return its run_id.\n\n"
                           "**Call-me-back (default ON):** same as `run_agent_async` — your "
@@ -890,7 +897,7 @@ async def _list_tools() -> list[Tool]:
                           "moved straight to Done unconditionally — overrides QAStatus/Need "
                           "Human/even an invalid DeployComponent, checked before anything else "
                           "below; deployed (all named workspaces >= target) -> "
-                          "Done if QAStatus=='done', else Testing + a qa-sonnet dispatch with "
+                          "Done if QAStatus=='done', else Testing + a qas group-default dispatch with "
                           "qa_rerun=true; DeployComponent='none' (explicit no-deployment-"
                           "needed sentinel, DeployToVersion not required) -> no_deploy_needed, "
                           "routed by QAStatus exactly like 'deployed'; pending/partial -> "
@@ -2943,13 +2950,26 @@ async def _deploy_followups(c: httpx.AsyncClient, board: "kanban_dispatch.BoardC
             continue
         body = {"input": {"input": _deploy_qa_input(row)},
                 "target_slug": row.get("target_slug") or kanban_dispatch.DEFAULT_TARGET_SLUG,
-                "notion_task_id": row["page_id"], "qa_rerun": True,
+                "notion_task_id": row["page_id"],
                 "workspace": _own_workspace()}
         try:
-            qr = await c.post(f"{BASE}/api/agents/qa-sonnet/run", json=body)
+            qr = await c.post(f"{BASE}/api/agent-groups/qas/run", json=body)
             if qr.status_code == 200:
                 row["qa_dispatch"] = {"run_id": qr.json().get("run_id")}
                 await asyncio.to_thread(deploy_reconcile.mark_qa_dispatched, board, row["page_id"])
+            elif qr.status_code == 409:
+                # A timed-out prior dispatch may already have landed. Read that
+                # run and stamp the handoff, rather than dispatching again next tick.
+                match = re.search(r"\brun ([a-f0-9]{32})\b", qr.text)
+                if match:
+                    existing = await c.get(f"{BASE}/api/runs/{match.group(1)}")
+                    if existing.status_code == 200:
+                        row["qa_dispatch"] = {"run_id": match.group(1), "existing": True}
+                        await asyncio.to_thread(deploy_reconcile.mark_qa_dispatched, board, row["page_id"])
+                    else:
+                        row["qa_dispatch"] = {"error": f"cannot read existing QA: {existing.status_code}"}
+                else:
+                    row["qa_dispatch"] = {"error": f"409 {qr.text[:200]}"}
             else:
                 row["qa_dispatch"] = {"error": f"{qr.status_code} {qr.text[:200]}"}
         except Exception as exc:
@@ -3171,6 +3191,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
 
         # --- runs ---
+        if name == "get_group_default":
+            r = await c.get(f"{BASE}/api/agent-groups/{args['group_slug']}/default",
+                            params={"workspace": _own_workspace()})
+            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "run_agent_async":
             if not args.get("target_slug") and not args.get("target_id"):
                 return _err(400, "target_slug is required. Use list_targets to find an existing Target or create_target to make one, then pass target_slug.")
@@ -3215,7 +3239,15 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             # never inference. setdefault: never clobber an explicit
             # workspace= the caller already set.
             body.setdefault("workspace", _own_workspace())
-            r = await c.post(f"{BASE}/api/agents/{args['slug']}/run", json=body)
+            if args.get("group_slug"):
+                path = f"/api/agent-groups/{args['group_slug']}/run"
+                if args.get("slug"):
+                    body["agent_slug"] = args["slug"]
+            elif args.get("slug"):
+                path = f"/api/agents/{args['slug']}/run"
+            else:
+                return _err(400, "slug or group_slug is required")
+            r = await c.post(f"{BASE}{path}", json=body)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "run_workflow_async":
             if not args.get("target_slug") and not args.get("target_id"):

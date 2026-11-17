@@ -288,12 +288,10 @@ def _this_workspace() -> str:
 
 def dispatch_payload(card: dict, input_text: str) -> tuple[str, dict] | None:
     """``(path, body)`` for the platform call, or None when the card names
-    neither an agent nor a workflow — which is not an error, just a card that
-    isn't dispatchable yet."""
+    neither an agent nor a workflow: use the saved coders workspace default.
+    Explicit card selections always win; resume_payload keeps its original agent."""
     agent_slug = (card.get("agent_slug") or "").strip()
     workflow_slug = (card.get("workflow_slug") or "").strip()
-    if not agent_slug and not workflow_slug:
-        return None
     payload = {
         "input": {"input": input_text},
         "target_slug": (card.get("target_slug") or "").strip() or DEFAULT_TARGET_SLUG,
@@ -304,7 +302,8 @@ def dispatch_payload(card: dict, input_text: str) -> tuple[str, dict] | None:
         "workspace": _this_workspace(),
     }
     path = (f"/api/agents/{agent_slug}/run" if agent_slug
-            else f"/api/workflows/{workflow_slug}/run")
+            else f"/api/workflows/{workflow_slug}/run" if workflow_slug
+            else "/api/agent-groups/coders/run")
     return path, payload
 
 
