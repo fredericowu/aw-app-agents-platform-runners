@@ -58,7 +58,14 @@ The same pass also hands that token to agents-platform-multitenant as this tenan
 
 ### OpenAI models
 
-The app contributes the current OpenAI catalogue as `openai-*` models, and its settings panel holds the **OpenAI API key** they run on. Saving the panel pushes that key onto Agents Platform's own `Settings.openai_api_key` row, so the models and the credential they need are configured in one place instead of two. A blank field never clears the platform's value — clearing is done in the platform UI, deliberately.
+The app contributes the current OpenAI catalogue and its settings panel holds
+the **OpenAI API key** the models run on. Current GPT-6 models use their public
+`gpt-*` identifiers directly; legacy catalogue entries retain their existing
+`openai-*` slugs so agents already pointing at them keep resolving. Saving
+the panel pushes the key onto Agents Platform's own
+`Settings.openai_api_key` row, so the models and credential are configured
+in one place instead of two. A blank field never clears the platform's value
+— clearing is done in the platform UI, deliberately.
 
 These used to be four slugs hardcoded in Agents Platform's `seed.py`, which is why they were stale: a hardcoded seed can't track a catalogue that ships a new frontier model every few months, and since the seed re-runs on every boot, deleting an obsolete one only made it come back. Refreshing the list is now an app release, not a platform deploy.
 
