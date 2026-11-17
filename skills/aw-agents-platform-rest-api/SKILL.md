@@ -63,6 +63,24 @@ jq -r '.[0].graph.edges[]? | "\(.source) -> \(.target)"' .tmp/ap-rest/agent-flow
 Same recipe for `/api/supervisions`, `/api/runs`, `/api/me`, or a route you
 are actively adding and want to curl-test before it has an MCP wrapper.
 
+## Recursive run cost analytics
+
+`GET /api/runs/cost-analytics` accepts exactly one trimmed query parameter:
+`card_id` or `run_id`. `card_id` is a Notion card UUID whose run properties
+become discovery seeds; `run_id` starts from one run. Discovery follows
+`parent_run_id`, deduplicates descendants, and returns discovery roots and
+diagnostics alongside per-run and aggregate tokens, known/unknown monetary
+cost, per-tool call/error/miss groups, deterministic miss classifications, and
+telemetry notes. Per-tool token fields are always null with
+`tokens_available=false`; the API does not fabricate token attribution from
+run totals.
+
+Errors are intentional and should be preserved for callers: `404` when a
+direct `run_id` does not exist, `409` when card lookup is unavailable because
+the tenant has no Notion token, and `422` for invalid UUIDs or when both/neither
+selector is supplied. A card with some malformed or unresolved run references
+can still return `200`; inspect its discovery diagnostics.
+
 ## There is no `PATCH /api/agents/{slug}` — mutate with GET + PUT
 
 Changing one field on an agent is not a `PATCH`. That verb returns **405
