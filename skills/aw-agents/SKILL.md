@@ -560,10 +560,20 @@ state. Anything that mutates the user's work belongs to an agent.
 | **Watch a long-running shell command, no LLM in the loop** | `run_monitor_async(command, target_slug=...)` — see below, NOT the harness's own `Monitor` tool. For a short/bounded wait (≤10 min), `run_monitor_sync` blocks the same call instead of calling back |
 | **Watch a whole dispatched chain go idle, no polling** | `supervise(session_id=...)` — see below; not the same as `call_me_back`, which only covers the one run you dispatched |
 | **Turn off / inspect a supervision** | `stop_supervisor`, `supervisor_status`, `list_supervisors` (everyone's, not just yours) — see the `aw-supervisor-tool` skill |
-| Observe | `run_status`, `run_events`, `run_tree` |
+| Observe one run/tree | `run_status`, `run_events`, `run_tree` |
+| **Recursive card/run cost analytics** | `run_cost_analytics(card_id=...)` or `run_cost_analytics(run_id=...)` — exactly one selector |
 | Stop | `cancel_run`, `cancel_all_runs` |
 | Present | `mcp__aw-gateway__aw_presentation__create_presentation`, `update_presentation`, if installed |
 | Coordinate | `TaskCreate`, `TaskUpdate`, `AskUserQuestion` |
+
+`run_cost_analytics` is the recursive accounting view: it discovers a full
+run graph from one run or all seeds attached to a card, then returns discovery
+metadata, per-run and aggregate tokens/cost, cost completeness, per-tool call
+groups, and deterministic tool-call miss classifications. Per-tool token fields
+are null because the event telemetry cannot attribute tokens defensibly; the
+tool never fabricates a split. Use `run_tree` for one run's execution hierarchy
+and hop/budget rollup. Use `tool_usage_metrics` to count or enumerate tool-call
+metadata across an arbitrary time/filter window without recursive discovery.
 
 **Fanning out the same task across many known items** (N repos, N files) —
 don't loop `run_agent_async` one at a time. See the `aw-agent-telegram`

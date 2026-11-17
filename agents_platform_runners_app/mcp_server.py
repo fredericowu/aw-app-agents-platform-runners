@@ -1373,6 +1373,24 @@ async def _list_tools() -> list[Tool]:
              inputSchema={"type": "object",
                           "properties": {"run_id": {"type": "string"}},
                           "required": ["run_id"]}),
+        Tool(name="run_cost_analytics",
+             description=("Recursive cost analytics for exactly one card or run. Pass "
+                          "exactly one of `card_id` or `run_id`; passing both or neither "
+                          "is rejected before any HTTP request. Returns discovery roots "
+                          "and metadata, per-run and aggregate token/cost totals, per-tool "
+                          "call/error/miss groups with null token fields rather than "
+                          "fabricated attribution, and deterministically classified tool "
+                          "call misses. Unlike `run_tree`, card discovery can start from "
+                          "multiple seed runs and the response includes tool/miss and "
+                          "cost-completeness detail. Unlike `tool_usage_metrics`, this "
+                          "follows the recursive run graph and returns token/cost totals."),
+             inputSchema={"type": "object",
+                          "properties": {
+                              "card_id": {"type": "string",
+                                  "description": "Notion card UUID to discover seed runs from. Pass this or run_id, never both."},
+                              "run_id": {"type": "string",
+                                  "description": "Run UUID to use as the single discovery seed. Pass this or card_id, never both."},
+                          }}),
         Tool(name="cancel_run",
              description=("Cancel a running run. For workflows the cancel cascades "
                           "through all descendants."),
@@ -3603,6 +3621,14 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "run_tree":
             r = await c.get(f"{BASE}/api/runs/{args['run_id']}/tree")
+            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+        if name == "run_cost_analytics":
+            card_id = str(args.get("card_id") or "").strip()
+            run_id = str(args.get("run_id") or "").strip()
+            if bool(card_id) == bool(run_id):
+                return _err(400, "Pass exactly one of card_id or run_id (not both).")
+            params = {"card_id": card_id} if card_id else {"run_id": run_id}
+            r = await c.get(f"{BASE}/api/runs/cost-analytics", params=params)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "list_runs":
             params = {"limit": str(args.get("limit") or 20), "summary": "true"}
