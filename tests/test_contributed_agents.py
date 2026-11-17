@@ -93,8 +93,8 @@ def test_gpt_5_6_runner_models_are_retired(spec):
 
 def test_declares_antigravity_runner_models(spec):
     models = {model["slug"]: model for model in spec["models"]}
-    assert "antigravity-runner-gemini-3-8-flash-high" in models
-    model = models["antigravity-runner-gemini-3-8-flash-high"]
+    assert "antigravity-gemini-3-8-flash-high" in models
+    model = models["antigravity-gemini-3-8-flash-high"]
     assert model["provider"] == "runner"
     assert model["params"] == {
         "runner": "aw-agy",
@@ -103,15 +103,15 @@ def test_declares_antigravity_runner_models(spec):
         "dangerous_skip_permissions": True,
         "timeout_s": 900,
     }
-    assert "antigravity-runner-gemini-flash" in models
+    assert "antigravity-gemini-flash" in models
     for slug, model_id in (
-        ("antigravity-runner-gemini-4-hydrogen-high", "gemini-4-hydrogen-high"),
-        ("antigravity-runner-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-xhigh"),
-        ("antigravity-runner-gemini-4-hydrogen-medium", "gemini-4-hydrogen-medium"),
-        ("antigravity-runner-gemini-4-hydrogen-low", "gemini-4-hydrogen-low"),
-        ("antigravity-runner-gemini-4-argon-high", "gemini-4-argon-high"),
-        ("antigravity-runner-gemini-4-argon-medium", "gemini-4-argon-medium"),
-        ("antigravity-runner-gemini-4-argon-low", "gemini-4-argon-low"),
+        ("antigravity-gemini-4-hydrogen-high", "gemini-4-hydrogen-high"),
+        ("antigravity-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-xhigh"),
+        ("antigravity-gemini-4-hydrogen-medium", "gemini-4-hydrogen-medium"),
+        ("antigravity-gemini-4-hydrogen-low", "gemini-4-hydrogen-low"),
+        ("antigravity-gemini-4-argon-high", "gemini-4-argon-high"),
+        ("antigravity-gemini-4-argon-medium", "gemini-4-argon-medium"),
+        ("antigravity-gemini-4-argon-low", "gemini-4-argon-low"),
     ):
         assert slug in models
         assert models[slug]["provider"] == "runner"

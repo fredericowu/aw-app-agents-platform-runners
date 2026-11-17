@@ -222,9 +222,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-3-8-flash-high",
+          "slug": "antigravity-gemini-3-8-flash-high",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-3-8-flash-high",
+          "model_id": "antigravity-gemini-3-8-flash-high",
           "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash High)",
           "params": {
             "runner": "aw-agy",
@@ -235,9 +235,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-3-8-flash-medium",
+          "slug": "antigravity-gemini-3-8-flash-medium",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-3-8-flash-medium",
+          "model_id": "antigravity-gemini-3-8-flash-medium",
           "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash Medium)",
           "params": {
             "runner": "aw-agy",
@@ -248,9 +248,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-3-8-flash-low",
+          "slug": "antigravity-gemini-3-8-flash-low",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-3-8-flash-low",
+          "model_id": "antigravity-gemini-3-8-flash-low",
           "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash Low)",
           "params": {
             "runner": "aw-agy",
@@ -261,9 +261,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-flash",
+          "slug": "antigravity-gemini-flash",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-flash",
+          "model_id": "antigravity-gemini-flash",
           "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash)",
           "params": {
             "runner": "aw-agy",
@@ -274,9 +274,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-4-hydrogen-high",
+          "slug": "antigravity-gemini-4-hydrogen-high",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-4-hydrogen-high",
+          "model_id": "antigravity-gemini-4-hydrogen-high",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen High)",
           "params": {
             "runner": "aw-agy",
@@ -287,9 +287,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-4-hydrogen-xhigh",
+          "slug": "antigravity-gemini-4-hydrogen-xhigh",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-4-hydrogen-xhigh",
+          "model_id": "antigravity-gemini-4-hydrogen-xhigh",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen XHigh)",
           "params": {
             "runner": "aw-agy",
@@ -300,9 +300,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-4-hydrogen-medium",
+          "slug": "antigravity-gemini-4-hydrogen-medium",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-4-hydrogen-medium",
+          "model_id": "antigravity-gemini-4-hydrogen-medium",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen Medium)",
           "params": {
             "runner": "aw-agy",
@@ -313,9 +313,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-4-hydrogen-low",
+          "slug": "antigravity-gemini-4-hydrogen-low",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-4-hydrogen-low",
+          "model_id": "antigravity-gemini-4-hydrogen-low",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen Low)",
           "params": {
             "runner": "aw-agy",
@@ -326,9 +326,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-4-argon-high",
+          "slug": "antigravity-gemini-4-argon-high",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-4-argon-high",
+          "model_id": "antigravity-gemini-4-argon-high",
           "display_name": "Antigravity (aw Runner, Gemini 4 Argon High)",
           "params": {
             "runner": "aw-agy",
@@ -339,9 +339,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-4-argon-medium",
+          "slug": "antigravity-gemini-4-argon-medium",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-4-argon-medium",
+          "model_id": "antigravity-gemini-4-argon-medium",
           "display_name": "Antigravity (aw Runner, Gemini 4 Argon Medium)",
           "params": {
             "runner": "aw-agy",
@@ -352,9 +352,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gemini-4-argon-low",
+          "slug": "antigravity-gemini-4-argon-low",
           "provider": "runner",
-          "model_id": "antigravity-runner-gemini-4-argon-low",
+          "model_id": "antigravity-gemini-4-argon-low",
           "display_name": "Antigravity (aw Runner, Gemini 4 Argon Low)",
           "params": {
             "runner": "aw-agy",
@@ -365,9 +365,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-claude-opus-5-5-low",
+          "slug": "antigravity-claude-opus-5-5-low",
           "provider": "runner",
-          "model_id": "antigravity-runner-claude-opus-5-5-low",
+          "model_id": "antigravity-claude-opus-5-5-low",
           "display_name": "Antigravity (aw Runner, Claude Opus 5.5 Low)",
           "params": {
             "runner": "aw-agy",
@@ -378,9 +378,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-claude-opus-5-5-medium",
+          "slug": "antigravity-claude-opus-5-5-medium",
           "provider": "runner",
-          "model_id": "antigravity-runner-claude-opus-5-5-medium",
+          "model_id": "antigravity-claude-opus-5-5-medium",
           "display_name": "Antigravity (aw Runner, Claude Opus 5.5 Medium)",
           "params": {
             "runner": "aw-agy",
@@ -391,9 +391,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-claude-opus-5-5-high",
+          "slug": "antigravity-claude-opus-5-5-high",
           "provider": "runner",
-          "model_id": "antigravity-runner-claude-opus-5-5-high",
+          "model_id": "antigravity-claude-opus-5-5-high",
           "display_name": "Antigravity (aw Runner, Claude Opus 5.5 High)",
           "params": {
             "runner": "aw-agy",
@@ -404,9 +404,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-claude-sonnet-5-5-low",
+          "slug": "antigravity-claude-sonnet-5-5-low",
           "provider": "runner",
-          "model_id": "antigravity-runner-claude-sonnet-5-5-low",
+          "model_id": "antigravity-claude-sonnet-5-5-low",
           "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 Low)",
           "params": {
             "runner": "aw-agy",
@@ -417,9 +417,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-claude-sonnet-5-5-medium",
+          "slug": "antigravity-claude-sonnet-5-5-medium",
           "provider": "runner",
-          "model_id": "antigravity-runner-claude-sonnet-5-5-medium",
+          "model_id": "antigravity-claude-sonnet-5-5-medium",
           "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 Medium)",
           "params": {
             "runner": "aw-agy",
@@ -430,9 +430,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-claude-sonnet-5-5-high",
+          "slug": "antigravity-claude-sonnet-5-5-high",
           "provider": "runner",
-          "model_id": "antigravity-runner-claude-sonnet-5-5-high",
+          "model_id": "antigravity-claude-sonnet-5-5-high",
           "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 High)",
           "params": {
             "runner": "aw-agy",
@@ -443,9 +443,9 @@
           }
         },
         {
-          "slug": "antigravity-runner-gpt-oss-120b-medium",
+          "slug": "antigravity-gpt-oss-120b-medium",
           "provider": "runner",
-          "model_id": "antigravity-runner-gpt-oss-120b-medium",
+          "model_id": "antigravity-gpt-oss-120b-medium",
           "display_name": "Antigravity (aw Runner, GPT-OSS 120B Medium)",
           "params": {
             "runner": "aw-agy",
@@ -508,7 +508,7 @@
           }
         },
         {
-          "slug": "gpt-6.1-sol",
+          "slug": "gpt-6-1-sol",
           "provider": "openai",
           "model_id": "gpt-6.1-sol",
           "display_name": "OpenAI \u2013 GPT-6.1 Sol",
@@ -522,7 +522,7 @@
           "params": {}
         },
         {
-          "slug": "gpt-6.1-terra",
+          "slug": "gpt-6-1-terra",
           "provider": "openai",
           "model_id": "gpt-6.1-terra",
           "display_name": "OpenAI \u2013 GPT-6.1 Terra",
@@ -1087,7 +1087,7 @@
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant, for fast and intelligent conversations powered by Google Gemini 3.8 Flash while staying reachable from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "antigravity-runner-gemini-3-8-flash-high",
+          "model_slug": "antigravity-gemini-3-8-flash-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1109,7 +1109,7 @@
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Google Gemini 4 Hydrogen, for high-capability reasoning and coding from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "antigravity-runner-gemini-4-hydrogen-high",
+          "model_slug": "antigravity-gemini-4-hydrogen-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1131,7 +1131,7 @@
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Claude Sonnet 5.5, for fast, capable replies and coding from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "antigravity-runner-claude-sonnet-5-5-high",
+          "model_slug": "antigravity-claude-sonnet-5-5-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1153,7 +1153,7 @@
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Claude Opus 5.5, for high-capability reasoning and coding from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "antigravity-runner-claude-opus-5-5-high",
+          "model_slug": "antigravity-claude-opus-5-5-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1175,7 +1175,7 @@
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Google Gemini 4 Argon, for balanced capability and speed from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "antigravity-runner-gemini-4-argon-high",
+          "model_slug": "antigravity-gemini-4-argon-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
