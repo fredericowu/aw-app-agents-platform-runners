@@ -192,6 +192,10 @@ def _backoff_state(last_swept_at: str | None, comments_md: str | None) -> str:
     return "eligible" if latest > swept else "backed_off"
 
 
+def is_qa_agent(slug: str | None) -> bool:
+    return slug == "qa" or (slug or "").startswith("qa-")
+
+
 async def _agent_activity(page_id: str, list_runs: ListRunsFn, now: float) -> dict:
     """aw-manager SKILL.md's "Batch 1 — stale In Progress" / "Run check
     (non-negotiable exclusion)", absorbed verbatim per design §3.D — the
@@ -237,7 +241,7 @@ async def _agent_activity(page_id: str, list_runs: ListRunsFn, now: float) -> di
     if not work_rows:
         return {"state": "none"}
 
-    non_qa = [r for r in work_rows if not (r.get("source_slug") or "").startswith("qa-")]
+    non_qa = [r for r in work_rows if not is_qa_agent(r.get("source_slug"))]
     # "On a card with >10 sub-dispatches since the real session, resume_run_id
     # is wrong-by-construction; report resume_window_exceeded:true rather than
     # widening the limit" (design §9) — the only case this app can actually

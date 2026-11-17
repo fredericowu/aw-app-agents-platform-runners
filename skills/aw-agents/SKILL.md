@@ -196,6 +196,16 @@ Call `create_target` with:
 | `tags` | 5-10 tags. These drive lesson retrieval and lesson_forecast. Include task category + domain tags. |
 | `notes` | Anything the next conductor would want to know — e.g. "first delivery in this domain, no priors, expect high variance". |
 
+For automatic role selection, use `run_agent_async(group_slug="coders", input="...",
+target_slug="...")` (or `group_slug="qas"` after merge and deployment). The server
+resolves the saved default for the authenticated tenant and this workspace. Read it
+with `get_group_default(group_slug="coders")`; `agent_slug=null` means unconfigured,
+and dispatch fails clearly without choosing an arbitrary member. Passing `slug`
+alongside `group_slug` explicitly selects that member instead. Other variants stay
+selectable. Existing single-agent calls are unchanged. A resumed session must belong
+to the selected member. Exact `qa` and `qa-*` share the same deduplication guard;
+409 means read the existing run, never retry with `qa_rerun` to force a duplicate.
+
 **Then — and this is where conductors most often slip — pass `target_slug`
 (or `target_id`) on EVERY subsequent dispatch:**
 

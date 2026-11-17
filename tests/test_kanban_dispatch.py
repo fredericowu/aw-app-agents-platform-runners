@@ -78,8 +78,10 @@ def test_agent_wins_when_a_card_names_both():
     assert path == "/api/agents/coder-sonnet/run"
 
 
-def test_card_without_a_slug_is_not_dispatchable():
-    assert kd.dispatch_payload(_card(agent_slug=None, workflow_slug=None), "X") is None
+def test_card_without_explicit_selection_uses_coders_default():
+    path, payload = kd.dispatch_payload(_card(agent_slug=None, workflow_slug=None), "X")
+    assert path == "/api/agent-groups/coders/run"
+    assert payload["input"] == {"input": "X"}
 
 
 def test_card_without_a_target_gets_the_monolith_default():
@@ -586,16 +588,13 @@ def test_sweep_skips_a_card_the_other_side_already_moved():
     assert board.writes == []
 
 
-def test_sweep_skips_a_card_with_no_slug_without_claiming_it():
-    """A card nobody finished filling in is `skipped`, not an error — and it
-    must not burn a claim, or the monolith reads our token on a card we were
-    never going to dispatch."""
+def test_sweep_without_explicit_agent_dispatches_saved_coders_default():
     board = FakeBoard(cards=[_ready_summary(agent_slug=None)],
                       card={"page_id": "p1", "status": "Ready", "agent_slug": None})
-    out = _sweep(board, FakePlatform())
-
-    assert "no agent_slug" in out["results"][0]["skipped"]
-    assert board.writes == [] and board.moves == []
+    platform = FakePlatform()
+    out = _sweep(board, platform)
+    assert out["results"][0]["run_id"]
+    assert platform.dispatched[0][0] == "/api/agent-groups/coders/run"
 
 
 def test_dry_run_writes_nothing_at_all():
