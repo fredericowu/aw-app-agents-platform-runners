@@ -2951,6 +2951,8 @@ async def _deploy_followups(c: httpx.AsyncClient, board: "kanban_dispatch.BoardC
         body = {"input": {"input": _deploy_qa_input(row)},
                 "target_slug": row.get("target_slug") or kanban_dispatch.DEFAULT_TARGET_SLUG,
                 "notion_task_id": row["page_id"],
+                # Only the verified-deployment gate requests a fresh QA cycle.
+                "qa_rerun": True,
                 "workspace": _own_workspace()}
         try:
             qr = await c.post(f"{BASE}/api/agent-groups/qas/run", json=body)

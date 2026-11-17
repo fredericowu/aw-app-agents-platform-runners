@@ -45,7 +45,7 @@ def test_lookup_uses_own_workspace(monkeypatch):
     assert json.loads(result[0].text)["agent_slug"] == "coder"
 
 
-def test_deploy_dispatch_uses_qas_without_dedup_bypass(monkeypatch):
+def test_deploy_dispatch_uses_qas_preserving_verified_deployment_rerun(monkeypatch):
     seen = []
     def handler(request):
         seen.append((request.url.path, json.loads(request.content)))
@@ -57,7 +57,7 @@ def test_deploy_dispatch_uses_qas_without_dedup_bypass(monkeypatch):
             await m._deploy_followups(c, object(), {"moved": [row]})
     asyncio.run(run())
     assert seen[0][0] == "/api/agent-groups/qas/run"
-    assert "qa_rerun" not in seen[0][1]
+    assert seen[0][1]["qa_rerun"] is True
     assert row["qa_dispatch"]["run_id"] == "r"
 
 
