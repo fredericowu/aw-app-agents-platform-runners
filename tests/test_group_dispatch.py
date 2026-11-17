@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agents_platform_runners_app import mcp_server as m, work_loop
 
 
-@pytest.mark.parametrize("override", [None, "variant"])
+@pytest.mark.parametrize("override", [None, "", "variant"])
 def test_group_dispatch(monkeypatch, override):
     seen = []
     def handler(request):
@@ -21,7 +21,7 @@ def test_group_dispatch(monkeypatch, override):
     monkeypatch.setattr(m.httpx, "AsyncClient", lambda **kw: real_client(**{**kw, "transport": httpx.MockTransport(handler)}))
     monkeypatch.setenv("AW_WORKSPACE", "aw")
     args = {"group_slug": "coders", "input": "build", "target_slug": "target", "call_me_back": False}
-    if override:
+    if override is not None:
         args["slug"] = override
     asyncio.run(m._call_tool("run_agent_async", args))
     path, body = seen[0]
@@ -29,6 +29,22 @@ def test_group_dispatch(monkeypatch, override):
     assert body["workspace"] == "aw"
     assert body.get("agent_slug") == override
     assert "qa_rerun" not in body
+
+
+def test_empty_override_returns_backend_rejection_instead_of_default_run(monkeypatch):
+    def handler(request):
+        body = json.loads(request.content)
+        if body.get("agent_slug") == "":
+            return httpx.Response(422, json={"detail": "invalid explicit member"})
+        return httpx.Response(200, json={"run_id": "unintended-default-run"})
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(m.httpx, "AsyncClient", lambda **kw: real_client(**{**kw, "transport": httpx.MockTransport(handler)}))
+    result = asyncio.run(m._call_tool("run_agent_async", {
+        "group_slug": "coders", "slug": "", "input": "build", "target_slug": "target",
+        "call_me_back": False,
+    }))
+    assert "422" in result[0].text
+    assert "unintended-default-run" not in result[0].text
 
 
 def test_lookup_uses_own_workspace(monkeypatch):
