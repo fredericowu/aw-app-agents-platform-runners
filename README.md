@@ -59,9 +59,10 @@ The same pass also hands that token to agents-platform-multitenant as this tenan
 ### OpenAI models
 
 The app contributes the current OpenAI catalogue and its settings panel holds
-the **OpenAI API key** the models run on. Current GPT-6 models use their public
-`gpt-*` identifiers directly; legacy catalogue entries retain their existing
-`openai-*` slugs so agents already pointing at them keep resolving. Saving
+the **OpenAI API key** the models run on. Current GPT-6 models use normalized
+`gpt-*` slugs (dots in provider IDs become hyphens); legacy catalogue entries
+retain their existing `openai-*` slugs so agents already pointing at them
+keep resolving. Saving
 the panel pushes the key onto Agents Platform's own
 `Settings.openai_api_key` row, so the models and credential are configured
 in one place instead of two. A blank field never clears the platform's value
