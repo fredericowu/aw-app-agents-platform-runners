@@ -2570,15 +2570,7 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     sys_prompt = job.get("append_system_prompt")
     if sys_prompt and not spec.get("append_system_prompt_flag"):
         prompt = f"{sys_prompt}\n\n---\n\n{prompt}" if prompt else sys_prompt
-    if cli == "codex":
-        # Both exec and exec resume accept '-' to read the prompt from stdin.
-        # Keep the combined persona + input out of argv (including the staged
-        # credentials shell below): Linux limits each argument to 128 KiB.
-        # Use the already-mounted per-run directory, also without workspace
-        # access. Fail the build if staging fails rather than drop instructions.
-        (isolated_host_dir / "codex-prompt.txt").write_text(prompt, encoding="utf-8")
-        argv.append("-")
-    elif spec.get("prompt_flag"):
+    if spec.get("prompt_flag"):
         argv += [spec["prompt_flag"], prompt]
     else:
         argv.append(prompt)
@@ -2657,13 +2649,6 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     # after the turn, through the same stdout stream the caller already parses.
     if cli in ("claude", "codex"):
         argv = ["aw-cli-with-quota", cli, *argv]
-    if cli == "codex":
-        # Redirect at the outer wrapper so the quota helper and Codex inherit
-        # stdin unchanged. Payload bytes never enter shell source or argv.
-        import shlex
-        prompt_path = f"{isolated_container_path}/codex-prompt.txt"
-        argv = ["sh", "-c", f'exec "$@" < {shlex.quote(prompt_path)}',
-                "aw-codex-stdin", *argv]
 
     env = {}
     if job.get("notion_task_id"):
