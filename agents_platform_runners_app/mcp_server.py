@@ -3243,7 +3243,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             body.setdefault("workspace", _own_workspace())
             if args.get("group_slug"):
                 path = f"/api/agent-groups/{args['group_slug']}/run"
-                if args.get("slug"):
+                if "slug" in args:
                     body["agent_slug"] = args["slug"]
             elif args.get("slug"):
                 path = f"/api/agents/{args['slug']}/run"
