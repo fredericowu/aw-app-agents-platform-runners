@@ -16,6 +16,9 @@ def test_cold_claude_and_codex_commands_use_quota_wrapper(tmp_path, monkeypatch)
 
     for cli in ("claude", "codex"):
         _image, argv, _kwargs, _mcp = execute._build_container_kwargs(_job(cli))
+        if cli == "codex":
+            assert argv[:2] == ["sh", "-c"]
+            argv = argv[4:]
         assert argv[:2] == ["aw-cli-with-quota", cli]
 
 
