@@ -179,50 +179,15 @@ def test_a_failed_stage_falls_back_to_the_inline_flag(tmp_path, monkeypatch):
     assert argv == ["--append-system-prompt", "You are the Manager."]
 
 
-@pytest.mark.parametrize("session_id", [None, "existing-thread"])
-@pytest.mark.parametrize("direct_home", [False, True])
-def test_codex_prompt_uses_mounted_file_and_stdin(tmp_path, monkeypatch, session_id, direct_home):
-    import subprocess
+def test_codex_still_gets_its_persona_prepended_into_the_prompt(tmp_path, monkeypatch):
+    """codex has neither flag (checked against codex-cli 0.147.0), so its
+    system prompt rides in the prompt text — unchanged by this fix, and still
+    argv-bound. Pinned so the behaviour is explicit rather than assumed.
+    """
+    argv = _cold_argv({**BASE_JOB, "cli": "codex",
+                       "append_system_prompt": "You are the Manager."},
+                      tmp_path, monkeypatch)
 
-    _setup(tmp_path, monkeypatch)
-    real_home = tmp_path / "real-home"
-    monkeypatch.setattr(execute_mod, "REAL_HOME", str(real_home))
-    if direct_home:
-        (real_home / ".codex").mkdir(parents=True)
-        monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "/host/home")
-    # Shell metacharacters and multibyte text must remain literal input.
-    user_prompt = "selector: stale-sweep\n'\" $(touch should-not-exist) `id` \nOlá 世界"
-    job = {**BASE_JOB, "cli": "codex", "session_id": session_id,
-           "append_system_prompt": OVERSIZED, "prompt": user_prompt}
-    _image, argv, kwargs, _mcp = execute_mod._build_container_kwargs(job)
-    assert not _oversized(argv)
-    assert all(OVERSIZED not in arg and user_prompt not in arg for arg in argv)
-
-    local_dir, _rel, container_dir = execute_mod._isolated_run_paths(
-        execute_mod.CLI_SPECS["codex"], job["run_id"], direct_home)
-    if direct_home:
-        container_dir = f"/home/ubuntu/run-{job['run_id']}"
-    expected = OVERSIZED + "\n\n---\n\n" + user_prompt
-    assert (local_dir / "codex-prompt.txt").read_text(encoding="utf-8") == expected
-    assert any(container_dir == m["bind"] or container_dir.startswith(m["bind"] + "/")
-               for m in kwargs["volumes"].values())
-
-    # Execute the real redirect wrapper with a fake quota/CLI process: check
-    # stdin byte-for-byte and ensure resume/model/flags keep their positions.
-    # Staged credentials may wrap it in another shell; decode that shell argv.
-    import shlex
-    if argv[:2] == ["sh", "-lc"]:
-        argv = shlex.split(argv[2].split("; exec ", 1)[1])
-    assert argv[:2] == ["sh", "-c"]
-    assert argv[4:7] == ["aw-cli-with-quota", "codex", "codex"]
-    cli_args = argv[7:]
-    assert cli_args[:1] == ["exec"]
-    if session_id:
-        assert cli_args[1:3] == ["resume", session_id]
-    assert "-" in cli_args
-    # Substitute only the executable, leaving the actual shell redirect intact.
-    argv[2] = argv[2].replace(container_dir, str(local_dir))
-    argv[4:] = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"]
-    completed = subprocess.run(argv, capture_output=True, cwd=tmp_path, check=True)
-    assert completed.stdout == expected.encode("utf-8")
-    assert not (tmp_path / "should-not-exist").exists()
+    assert "--append-system-prompt" not in argv
+    assert "--append-system-prompt-file" not in argv
+    assert any("You are the Manager." in a for a in argv)

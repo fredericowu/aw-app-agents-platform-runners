@@ -70,11 +70,11 @@ def test_chatgpt_codex_keeps_the_supported_gpt_5_6_sol_override(tmp_path, monkey
     monkeypatch.setattr(execute_mod, "_codex_auth_mode", lambda _home: "chatgpt")
     argv = _argv({**BASE_JOB, "cli": "codex", "model": "gpt-5.6-sol"},
                  tmp_path, monkeypatch)
-    assert argv[4:][argv[4:].index("-c") + 1] == 'model="gpt-5.6-sol"'
+    assert argv[argv.index("-c") + 1] == 'model="gpt-5.6-sol"'
 
 
 def test_chatgpt_codex_still_drops_known_legacy_overrides(tmp_path, monkeypatch):
     monkeypatch.setattr(execute_mod, "_codex_auth_mode", lambda _home: "chatgpt")
     argv = _argv({**BASE_JOB, "cli": "codex", "model": "gpt-5-codex"},
                  tmp_path, monkeypatch)
-    assert "-c" not in argv[4:]
+    assert "-c" not in argv
