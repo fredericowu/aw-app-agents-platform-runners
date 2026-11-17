@@ -25,9 +25,9 @@ APP_DIR = Path(__file__).resolve().parents[1]
 #: share this family's MCP-gateway contract — skill_slugs/agent_config_slug
 #: are how the Telegram agents reach tools, not a rule every agent follows.
 TELEGRAM_AGENT_SLUGS = {"telegram-sonnet", "telegram-opus", "telegram-haiku",
-                        "telegram-fable", "telegram-gpt-5-6-sol",
+                        "telegram-fable", "telegram-gpt-6-1-sol",
                         "telegram-flash", "telegram-hydrogen", "telegram-argon",
-                        "telegram-agy-sonnet", "telegram-agy-opus"}
+                        "telegram-antigravity-sonnet", "telegram-antigravity-opus"}
 
 
 @pytest.fixture(scope="module")
@@ -59,26 +59,36 @@ def test_ships_the_telegram_family(spec):
     assert TELEGRAM_AGENT_SLUGS <= slugs
 
 
-def test_declares_gpt_5_6_sol_for_the_codex_runner(spec):
+def test_declares_the_gpt_6_family_for_the_codex_runner(spec):
     models = {model["slug"]: model for model in spec["models"]}
-    model = models["codex-runner-gpt-5-6-sol"]
-    assert model["provider"] == "runner"
-    # "runner" must match a Runner row's actual registered slug
-    # (`{workspace}-{cli}` — see GET /api/runners), not a workspace-agnostic
-    # placeholder: "aw-codex" 404'd against this workspace's registry
-    # ("crispal-codex" is what's actually registered) even though this app's
-    # own manifest had shipped "aw-codex" since this model was added — the
-    # live row was manually corrected at some point and the manifest never
-    # caught up. bug:codex-telegram-gateway-401-stale-seed's sibling: same
-    # class of "content is seeded once and never rewritten" drift, one
-    # layer up (the model definition itself, not its seeded copy).
-    assert model["params"] == {
-        "runner": "crispal-codex",
-        "cli": "codex",
-        "model": "gpt-5.6-sol",
-        "dangerous_skip_permissions": True,
-        "timeout_s": 900,
+    expected = {
+        "codex-runner-gpt-6-1-sol": "gpt-6.1-sol",
+        "codex-runner-gpt-6-astra": "gpt-6-astra",
+        "codex-runner-gpt-6-1-terra": "gpt-6.1-terra",
+        "codex-runner-gpt-6-sol": "gpt-6-sol",
+        "codex-runner-gpt-6-luna": "gpt-6-luna",
     }
+    for slug, model_id in expected.items():
+        model = models[slug]
+        assert model["provider"] == "runner"
+        assert model["params"] == {
+            "runner": "aw-codex",
+            "cli": "codex",
+            "model": model_id,
+            "dangerous_skip_permissions": True,
+            "timeout_s": 900,
+        }
+
+
+def test_model_slugs_use_antigravity_not_the_cli_binary_name(spec):
+    models = {model["slug"]: model for model in spec["models"]}
+    assert not any(slug.startswith("agy-") for slug in models)
+    assert all(not model["model_id"].startswith("agy-") for model in models.values())
+
+
+def test_gpt_5_6_runner_models_are_retired(spec):
+    models = {model["slug"]: model for model in spec["models"]}
+    assert not any(slug.startswith("codex-runner-gpt-5-6-") for slug in models)
 
 
 def test_declares_antigravity_runner_models(spec):
@@ -95,13 +105,13 @@ def test_declares_antigravity_runner_models(spec):
     }
     assert "antigravity-runner-gemini-flash" in models
     for slug, model_id in (
-        ("agy-runner-gemini-4-hydrogen-high", "gemini-4-hydrogen-high"),
-        ("agy-runner-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-xhigh"),
-        ("agy-runner-gemini-4-hydrogen-medium", "gemini-4-hydrogen-medium"),
-        ("agy-runner-gemini-4-hydrogen-low", "gemini-4-hydrogen-low"),
-        ("agy-runner-gemini-4-argon-high", "gemini-4-argon-high"),
-        ("agy-runner-gemini-4-argon-medium", "gemini-4-argon-medium"),
-        ("agy-runner-gemini-4-argon-low", "gemini-4-argon-low"),
+        ("antigravity-runner-gemini-4-hydrogen-high", "gemini-4-hydrogen-high"),
+        ("antigravity-runner-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-xhigh"),
+        ("antigravity-runner-gemini-4-hydrogen-medium", "gemini-4-hydrogen-medium"),
+        ("antigravity-runner-gemini-4-hydrogen-low", "gemini-4-hydrogen-low"),
+        ("antigravity-runner-gemini-4-argon-high", "gemini-4-argon-high"),
+        ("antigravity-runner-gemini-4-argon-medium", "gemini-4-argon-medium"),
+        ("antigravity-runner-gemini-4-argon-low", "gemini-4-argon-low"),
     ):
         assert slug in models
         assert models[slug]["provider"] == "runner"
@@ -176,7 +186,7 @@ def test_every_agent_names_a_config_this_app_declares(spec):
 def test_qa_gpt_is_a_persistent_codex_qa_with_workspace_tools(spec):
     agents = {agent["slug"]: agent for agent in spec["agents"]}
     qa = agents["qa-gpt"]
-    assert qa["model_slug"] == "codex-runner-gpt-5-6-sol"
+    assert qa["model_slug"] == "codex-runner-gpt-6-1-sol"
     assert qa["agent_config_slug"] == "devteam-config"
     assert qa["group_slug"] == "qas"
     assert qa["skill_slugs"] == ["aw-agent-qa"]

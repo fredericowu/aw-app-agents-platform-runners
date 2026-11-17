@@ -157,40 +157,66 @@
     "agents": {
       "models": [
         {
-          "slug": "codex-runner-gpt-5-6-sol",
+          "slug": "codex-runner-gpt-6-1-sol",
           "provider": "runner",
-          "model_id": "codex-runner-gpt-5-6-sol",
-          "display_name": "Codex (aw Runner, GPT-5.6 Sol)",
+          "model_id": "codex-runner-gpt-6-1-sol",
+          "display_name": "Codex (aw Runner, GPT-6.1 Sol)",
           "params": {
-            "runner": "crispal-codex",
+            "runner": "aw-codex",
             "cli": "codex",
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6.1-sol",
             "dangerous_skip_permissions": true,
             "timeout_s": 900
           }
         },
         {
-          "slug": "codex-runner-gpt-5-6-luna",
+          "slug": "codex-runner-gpt-6-astra",
           "provider": "runner",
-          "model_id": "codex-runner-gpt-5-6-luna",
-          "display_name": "Codex (aw Runner, GPT-5.6 Luna)",
+          "model_id": "codex-runner-gpt-6-astra",
+          "display_name": "Codex (aw Runner, GPT-6 Astra)",
           "params": {
             "runner": "aw-codex",
             "cli": "codex",
-            "model": "gpt-5.6-luna",
+            "model": "gpt-6-astra",
             "dangerous_skip_permissions": true,
             "timeout_s": 900
           }
         },
         {
-          "slug": "codex-runner-gpt-5-6-terra",
+          "slug": "codex-runner-gpt-6-1-terra",
           "provider": "runner",
-          "model_id": "codex-runner-gpt-5-6-terra",
-          "display_name": "Codex (aw Runner, GPT-5.6 Terra)",
+          "model_id": "codex-runner-gpt-6-1-terra",
+          "display_name": "Codex (aw Runner, GPT-6.1 Terra)",
           "params": {
             "runner": "aw-codex",
             "cli": "codex",
-            "model": "gpt-5.6-terra",
+            "model": "gpt-6.1-terra",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "codex-runner-gpt-6-sol",
+          "provider": "runner",
+          "model_id": "codex-runner-gpt-6-sol",
+          "display_name": "Codex (aw Runner, GPT-6 Sol)",
+          "params": {
+            "runner": "aw-codex",
+            "cli": "codex",
+            "model": "gpt-6-sol",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "codex-runner-gpt-6-luna",
+          "provider": "runner",
+          "model_id": "codex-runner-gpt-6-luna",
+          "display_name": "Codex (aw Runner, GPT-6 Luna)",
+          "params": {
+            "runner": "aw-codex",
+            "cli": "codex",
+            "model": "gpt-6-luna",
             "dangerous_skip_permissions": true,
             "timeout_s": 900
           }
@@ -209,7 +235,7 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-3-8-flash-medium",
+          "slug": "antigravity-runner-gemini-3-8-flash-medium",
           "provider": "runner",
           "model_id": "antigravity-runner-gemini-3-8-flash-medium",
           "display_name": "Antigravity (aw Runner, Gemini 3.8 Flash Medium)",
@@ -248,9 +274,9 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-4-hydrogen-high",
+          "slug": "antigravity-runner-gemini-4-hydrogen-high",
           "provider": "runner",
-          "model_id": "agy-runner-gemini-4-hydrogen-high",
+          "model_id": "antigravity-runner-gemini-4-hydrogen-high",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen High)",
           "params": {
             "runner": "aw-agy",
@@ -261,9 +287,9 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-4-hydrogen-xhigh",
+          "slug": "antigravity-runner-gemini-4-hydrogen-xhigh",
           "provider": "runner",
-          "model_id": "agy-runner-gemini-4-hydrogen-xhigh",
+          "model_id": "antigravity-runner-gemini-4-hydrogen-xhigh",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen XHigh)",
           "params": {
             "runner": "aw-agy",
@@ -274,9 +300,9 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-4-hydrogen-medium",
+          "slug": "antigravity-runner-gemini-4-hydrogen-medium",
           "provider": "runner",
-          "model_id": "agy-runner-gemini-4-hydrogen-medium",
+          "model_id": "antigravity-runner-gemini-4-hydrogen-medium",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen Medium)",
           "params": {
             "runner": "aw-agy",
@@ -287,9 +313,9 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-4-hydrogen-low",
+          "slug": "antigravity-runner-gemini-4-hydrogen-low",
           "provider": "runner",
-          "model_id": "agy-runner-gemini-4-hydrogen-low",
+          "model_id": "antigravity-runner-gemini-4-hydrogen-low",
           "display_name": "Antigravity (aw Runner, Gemini 4 Hydrogen Low)",
           "params": {
             "runner": "aw-agy",
@@ -300,9 +326,9 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-4-argon-high",
+          "slug": "antigravity-runner-gemini-4-argon-high",
           "provider": "runner",
-          "model_id": "agy-runner-gemini-4-argon-high",
+          "model_id": "antigravity-runner-gemini-4-argon-high",
           "display_name": "Antigravity (aw Runner, Gemini 4 Argon High)",
           "params": {
             "runner": "aw-agy",
@@ -313,9 +339,9 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-4-argon-medium",
+          "slug": "antigravity-runner-gemini-4-argon-medium",
           "provider": "runner",
-          "model_id": "agy-runner-gemini-4-argon-medium",
+          "model_id": "antigravity-runner-gemini-4-argon-medium",
           "display_name": "Antigravity (aw Runner, Gemini 4 Argon Medium)",
           "params": {
             "runner": "aw-agy",
@@ -326,9 +352,9 @@
           }
         },
         {
-          "slug": "agy-runner-gemini-4-argon-low",
+          "slug": "antigravity-runner-gemini-4-argon-low",
           "provider": "runner",
-          "model_id": "agy-runner-gemini-4-argon-low",
+          "model_id": "antigravity-runner-gemini-4-argon-low",
           "display_name": "Antigravity (aw Runner, Gemini 4 Argon Low)",
           "params": {
             "runner": "aw-agy",
@@ -339,9 +365,9 @@
           }
         },
         {
-          "slug": "agy-runner-claude-opus-5-5-low",
+          "slug": "antigravity-runner-claude-opus-5-5-low",
           "provider": "runner",
-          "model_id": "agy-runner-claude-opus-5-5-low",
+          "model_id": "antigravity-runner-claude-opus-5-5-low",
           "display_name": "Antigravity (aw Runner, Claude Opus 5.5 Low)",
           "params": {
             "runner": "aw-agy",
@@ -352,9 +378,9 @@
           }
         },
         {
-          "slug": "agy-runner-claude-opus-5-5-medium",
+          "slug": "antigravity-runner-claude-opus-5-5-medium",
           "provider": "runner",
-          "model_id": "agy-runner-claude-opus-5-5-medium",
+          "model_id": "antigravity-runner-claude-opus-5-5-medium",
           "display_name": "Antigravity (aw Runner, Claude Opus 5.5 Medium)",
           "params": {
             "runner": "aw-agy",
@@ -365,9 +391,9 @@
           }
         },
         {
-          "slug": "agy-runner-claude-opus-5-5-high",
+          "slug": "antigravity-runner-claude-opus-5-5-high",
           "provider": "runner",
-          "model_id": "agy-runner-claude-opus-5-5-high",
+          "model_id": "antigravity-runner-claude-opus-5-5-high",
           "display_name": "Antigravity (aw Runner, Claude Opus 5.5 High)",
           "params": {
             "runner": "aw-agy",
@@ -378,9 +404,9 @@
           }
         },
         {
-          "slug": "agy-runner-claude-sonnet-5-5-low",
+          "slug": "antigravity-runner-claude-sonnet-5-5-low",
           "provider": "runner",
-          "model_id": "agy-runner-claude-sonnet-5-5-low",
+          "model_id": "antigravity-runner-claude-sonnet-5-5-low",
           "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 Low)",
           "params": {
             "runner": "aw-agy",
@@ -391,9 +417,9 @@
           }
         },
         {
-          "slug": "agy-runner-claude-sonnet-5-5-medium",
+          "slug": "antigravity-runner-claude-sonnet-5-5-medium",
           "provider": "runner",
-          "model_id": "agy-runner-claude-sonnet-5-5-medium",
+          "model_id": "antigravity-runner-claude-sonnet-5-5-medium",
           "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 Medium)",
           "params": {
             "runner": "aw-agy",
@@ -404,9 +430,9 @@
           }
         },
         {
-          "slug": "agy-runner-claude-sonnet-5-5-high",
+          "slug": "antigravity-runner-claude-sonnet-5-5-high",
           "provider": "runner",
-          "model_id": "agy-runner-claude-sonnet-5-5-high",
+          "model_id": "antigravity-runner-claude-sonnet-5-5-high",
           "display_name": "Antigravity (aw Runner, Claude Sonnet 5.5 High)",
           "params": {
             "runner": "aw-agy",
@@ -417,9 +443,9 @@
           }
         },
         {
-          "slug": "agy-runner-gpt-oss-120b-medium",
+          "slug": "antigravity-runner-gpt-oss-120b-medium",
           "provider": "runner",
-          "model_id": "agy-runner-gpt-oss-120b-medium",
+          "model_id": "antigravity-runner-gpt-oss-120b-medium",
           "display_name": "Antigravity (aw Runner, GPT-OSS 120B Medium)",
           "params": {
             "runner": "aw-agy",
@@ -480,6 +506,41 @@
             "dangerous_skip_permissions": true,
             "timeout_s": 900
           }
+        },
+        {
+          "slug": "gpt-6.1-sol",
+          "provider": "openai",
+          "model_id": "gpt-6.1-sol",
+          "display_name": "OpenAI \u2013 GPT-6.1 Sol",
+          "params": {}
+        },
+        {
+          "slug": "gpt-6-astra",
+          "provider": "openai",
+          "model_id": "gpt-6-astra",
+          "display_name": "OpenAI \u2013 GPT-6 Astra",
+          "params": {}
+        },
+        {
+          "slug": "gpt-6.1-terra",
+          "provider": "openai",
+          "model_id": "gpt-6.1-terra",
+          "display_name": "OpenAI \u2013 GPT-6.1 Terra",
+          "params": {}
+        },
+        {
+          "slug": "gpt-6-sol",
+          "provider": "openai",
+          "model_id": "gpt-6-sol",
+          "display_name": "OpenAI \u2013 GPT-6 Sol",
+          "params": {}
+        },
+        {
+          "slug": "gpt-6-luna",
+          "provider": "openai",
+          "model_id": "gpt-6-luna",
+          "display_name": "OpenAI \u2013 GPT-6 Luna",
+          "params": {}
         },
         {
           "slug": "openai-gpt-5-6-sol",
@@ -999,19 +1060,19 @@
           "color": "#f6ad55"
         },
         {
-          "slug": "telegram-gpt-5-6-sol",
-          "name": "Telegram - GPT-5.6 Sol",
+          "slug": "telegram-gpt-6-1-sol",
+          "name": "Telegram - GPT-6.1 Sol",
           "workspace_qualified": true,
-          "description": "The Codex-backed Telegram variant, for coding and other agentic work that benefits from GPT-5.6 Sol while staying reachable from the phone.",
+          "description": "The Codex-backed Telegram variant, for coding and other agentic work that benefits from GPT-6.1 Sol while staying reachable from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "codex-runner-gpt-5-6-sol",
+          "model_slug": "codex-runner-gpt-6-1-sol",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
           ],
           "capabilities": "Answers a human on their phone through a Telegram bot \u2014 voice or text, in their language \u2014 with this workspace's full tool surface behind it.",
           "use_cases": [
-            "reply to a Telegram message with GPT-5.6 Sol",
+            "reply to a Telegram message with GPT-6.1 Sol",
             "run a coding task from the phone",
             "use Codex through a Telegram conversation"
           ],
@@ -1048,7 +1109,7 @@
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Google Gemini 4 Hydrogen, for high-capability reasoning and coding from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "agy-runner-gemini-4-hydrogen-high",
+          "model_slug": "antigravity-runner-gemini-4-hydrogen-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1065,12 +1126,12 @@
           "color": "#34a853"
         },
         {
-          "slug": "telegram-agy-sonnet",
+          "slug": "telegram-antigravity-sonnet",
           "name": "Telegram - AGY - Sonnet",
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Claude Sonnet 5.5, for fast, capable replies and coding from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "agy-runner-claude-sonnet-5-5-high",
+          "model_slug": "antigravity-runner-claude-sonnet-5-5-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1087,12 +1148,12 @@
           "color": "#d97757"
         },
         {
-          "slug": "telegram-agy-opus",
+          "slug": "telegram-antigravity-opus",
           "name": "Telegram - AGY - Opus",
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Claude Opus 5.5, for high-capability reasoning and coding from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "agy-runner-claude-opus-5-5-high",
+          "model_slug": "antigravity-runner-claude-opus-5-5-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1114,7 +1175,7 @@
           "workspace_qualified": true,
           "description": "The Antigravity-backed Telegram variant powered by Google Gemini 4 Argon, for balanced capability and speed from the phone.",
           "system_prompt_file": "prompts/telegram.md",
-          "model_slug": "agy-runner-gemini-4-argon-high",
+          "model_slug": "antigravity-runner-gemini-4-argon-high",
           "agent_config_slug": "agent-config-aw-full",
           "skill_slugs": [
             "aw-agent-telegram"
@@ -1132,10 +1193,10 @@
         },
         {
           "slug": "qa-gpt",
-          "name": "QA - GPT-5.6 Sol",
+          "name": "QA - GPT-6.1 Sol",
           "description": "Validates a finished delivery independently against what was actually asked for, using the Codex runner.",
           "system_prompt_file": "prompts/qa.md",
-          "model_slug": "codex-runner-gpt-5-6-sol",
+          "model_slug": "codex-runner-gpt-6-1-sol",
           "disable_harness_tools": true,
           "agent_config_slug": "devteam-config",
           "group_slug": "qas",

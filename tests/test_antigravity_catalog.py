@@ -21,7 +21,7 @@ MODEL_IDS = [
 def test_vendor_model_is_discoverable_through_provisioning(model_id):
     manifest = json.loads((Path(__file__).parents[1] / "aw-app.json").read_text())
     models = manifest["contributes"]["agents"]["models"]
-    slug = f"agy-runner-{model_id}"
+    slug = f"antigravity-runner-{model_id}"
     declared = next((m for m in models if m["slug"] == slug), None)
     assert declared is not None, f"Missing Antigravity model: {model_id}"
     posted = []

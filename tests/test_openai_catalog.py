@@ -48,10 +48,18 @@ def openai_models(manifest) -> dict:
 # ---------------------------------------------------------------- catalogue
 
 def test_ships_the_current_frontier(openai_models):
-    """GPT-5.6 is the current generation; a catalogue without it is stale by
+    """GPT-6 is the current generation; a catalogue without it is stale by
     definition, which is the failure mode the platform seed had."""
-    assert {"openai-gpt-5-6-sol", "openai-gpt-5-6-luna",
-            "openai-gpt-5-6-terra"} <= set(openai_models)
+    assert {"gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra",
+            "gpt-6-sol", "gpt-6-luna"} <= set(openai_models)
+
+
+def test_gpt_6_api_slugs_match_the_provider_model_ids(openai_models):
+    """New API models use their public ``gpt-*`` names directly; provider
+    prefixes belong in metadata, not in the user-facing model identity."""
+    for slug, model in openai_models.items():
+        if model["model_id"].startswith("gpt-6"):
+            assert slug == model["model_id"]
 
 
 def test_reclaims_the_slugs_the_platform_used_to_seed(openai_models):
