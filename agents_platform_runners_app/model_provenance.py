@@ -1,9 +1,13 @@
 """Model identifiers safe to expose in execution context and PR footers."""
 from __future__ import annotations
 
+import logging
 import re
 import tomllib
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 def model_identifier(value: object) -> str | None:
@@ -57,5 +61,10 @@ def codex_config_model(config_path: Path, cwd: Path) -> str | None:
             return None
         with config_path.open("rb") as config_file:
             return model_identifier(tomllib.load(config_file).get("model"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return None
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError):
+        logger.warning("Omitting Codex model attribution: malformed TOML config")
+    except OSError:
+        logger.warning("Omitting Codex model attribution: unreadable config")
+    return None
