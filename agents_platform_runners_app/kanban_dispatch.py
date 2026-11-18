@@ -33,19 +33,26 @@ container it isn't even importable.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import http.client
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 
+from collections.abc import Callable
+from pathlib import Path
+
 from . import platform_base as platform_base_mod
 
 log = logging.getLogger("aw_apps.agents_platform_runners.kanban")
 
+RUNNERS_PREFIX = "/api/apps/agents-platform-runners"
+DEFAULT_CODER_SETTING = "default_agent_coder"
 NOTION_PREFIX = "/api/apps/notion"
 API_URL_VAR = "AW_WORKSPACE_API_URL"
 API_KEY_VAR = "AW_WORKSPACE_API_KEY"
@@ -176,6 +183,20 @@ class BoardClient:
             raise BoardUnavailable(
                 f"aw-app-notion returned a non-JSON body: {raw[:200]!r}") from None
 
+    def default_coder(self) -> str:
+        try:
+            result = self._request("GET", f"{RUNNERS_PREFIX}/kanban/default-coder")
+            if result.get("workspace") != _this_workspace():
+                raise ValueError("workspace lookup returned a different workspace")
+            slug = result["agent_slug"]
+            if not isinstance(slug, str) or not slug.strip():
+                raise ValueError("workspace lookup did not return a concrete agent slug")
+            return slug
+        except (BoardUnavailable, KeyError, TypeError, ValueError) as exc:
+            raise CoderDispatchError(
+                f"Could not read {DEFAULT_CODER_SETTING} in workspace {_this_workspace()!r}: {exc}"
+            ) from exc
+
     def ready_cards(self, status: str = "ready", limit: int = 50) -> list[dict]:
         query = urllib.parse.urlencode({"status": status, "limit": limit})
         body = self._request("GET", f"{NOTION_PREFIX}/kanban/cards?{query}")
@@ -286,15 +307,34 @@ def _this_workspace() -> str:
     return platform_base_mod.workspace_env("AW_WORKSPACE") or "aw"
 
 
-def dispatch_payload(card: dict, input_text: str) -> tuple[str, dict] | None:
-    """``(path, body)`` for the platform call, or None when the card names
-    neither an agent nor a workflow: use the saved coders workspace default.
-    Explicit card selections always win; resume_payload keeps its original agent."""
+class CoderDispatchError(ValueError):
+    """The workspace Coder selection could not be resolved."""
+
+
+def coder_setting(value: object) -> str:
+    label = f"{DEFAULT_CODER_SETTING} in workspace {_this_workspace()!r}"
+    if value is not None and not isinstance(value, str):
+        raise CoderDispatchError(f"{label} must be a concrete agent slug")
+    slug = value.strip() if isinstance(value, str) else ""
+    if slug and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", slug):
+        raise CoderDispatchError(f"{label} must be a concrete agent slug, got {slug!r}")
+    return slug or "coder"
+
+
+async def resolve_default_coder(platform: PlatformClient, read_setting: Callable[[], object]) -> str:
+    slug = coder_setting(await asyncio.to_thread(read_setting))
+    await platform.validate_agent(slug, setting=DEFAULT_CODER_SETTING)
+    return slug
+
+
+def dispatch_payload(card: dict, input_text: str, *, default_coder: str = "coder",
+                     default_target_slug: str = DEFAULT_TARGET_SLUG) -> tuple[str, dict]:
+    """Explicit agents and workflows take precedence over the workspace coder."""
     agent_slug = (card.get("agent_slug") or "").strip()
     workflow_slug = (card.get("workflow_slug") or "").strip()
     payload = {
         "input": {"input": input_text},
-        "target_slug": (card.get("target_slug") or "").strip() or DEFAULT_TARGET_SLUG,
+        "target_slug": (card.get("target_slug") or "").strip() or default_target_slug,
         "notion_task_id": card.get("page_id", ""),
         # AP-MT now accepts workspace on both the agent-run AND the
         # workflow-run path (docs/design/ap-mt-workspace-cascade.md,
@@ -303,7 +343,7 @@ def dispatch_payload(card: dict, input_text: str) -> tuple[str, dict] | None:
     }
     path = (f"/api/agents/{agent_slug}/run" if agent_slug
             else f"/api/workflows/{workflow_slug}/run" if workflow_slug
-            else "/api/agent-groups/coders/run")
+            else f"/api/agents/{default_coder}/run")
     return path, payload
 
 
@@ -383,32 +423,65 @@ class PlatformClient:
         self._base = base.rstrip("/")
 
     async def latest_run(self, page_id: str) -> dict | None:
-        try:
-            resp = await self._c.get(f"{self._base}/api/runs",
-                                     params={"notion_task_id": page_id, "limit": 1})
-        except Exception:
-            log.warning("kanban sweep: run lookup failed for %s", page_id, exc_info=True)
-            return None
+        resp = await self._c.get(f"{self._base}/api/runs",
+                                 params={"notion_task_id": page_id, "category": "work", "limit": 1})
         if resp.status_code != 200:
-            return None
+            raise RuntimeError(f"Card-bound run lookup failed for {page_id} (HTTP {resp.status_code})")
         runs = resp.json() or []
         return runs[0] if runs else None
 
-    async def dispatch(self, path: str, payload: dict) -> tuple[str, str]:
-        """``(run_id, error)`` — exactly one of the two is non-empty."""
+    async def validate_agent(self, slug: str, *, setting: str = "AgentSlug") -> None:
+        workspace = _this_workspace()
+        label = f"{setting}={slug!r} in workspace {workspace!r}"
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", slug):
+            raise CoderDispatchError(f"{label} must be a concrete agent slug")
+        try:
+            response = await self._c.get(f"{self._base}/api/agents/{slug}")
+            if response.status_code != 200:
+                raise CoderDispatchError(
+                    f"{label} could not be verified (HTTP {response.status_code}). "
+                    "Check that the agent exists and is active in Agents Platform."
+                )
+            agent = response.json()
+        except CoderDispatchError:
+            raise
+        except Exception as exc:
+            raise CoderDispatchError(f"Could not verify {label}: {exc}") from exc
+        if not isinstance(agent, dict) or agent.get("slug") != slug or agent.get("deleted_at"):
+            raise CoderDispatchError(f"{label} must name an active agent")
+        if setting == DEFAULT_CODER_SETTING:
+            if agent.get("workspace") and agent["workspace"] != workspace:
+                raise CoderDispatchError(f"{label} belongs to workspace {agent['workspace']!r}")
+            try:
+                runners = await self._c.get(f"{self._base}/api/runners", params={"workspace": workspace})
+                runners.raise_for_status()
+                registered = any(row.get("workspace") == workspace and row.get("base_url")
+                                 for row in runners.json())
+            except Exception as exc:
+                raise CoderDispatchError(f"Could not verify workspace registration for {label}: {exc}") from exc
+            if not registered:
+                raise CoderDispatchError(f"{label} requires a registered runner in that workspace")
+
+    async def dispatch(self, path: str, payload: dict) -> tuple[str, str, bool]:
+        """Return the run ID, error, and whether a rejection was definitive."""
         try:
             resp = await self._c.post(f"{self._base}{path}", json=payload)
+            if resp.status_code != 200:
+                return "", (f"dispatch failed: {resp.status_code} {resp.text[:200]}"), (
+                    resp.status_code in (400, 401, 403, 404, 409, 422, 429))
+            run = resp.json() or {}
+            run_id = str(run.get("run_id") or run.get("id") or "")
+            return run_id, "" if run_id else "dispatch response omitted the run ID", False
         except Exception as exc:
-            return "", f"dispatch failed: {exc}"
-        if resp.status_code != 200:
-            return "", f"dispatch failed: {resp.status_code} {resp.text[:200]}"
-        run = resp.json() or {}
-        return str(run.get("run_id") or run.get("id") or ""), ""
+            return "", f"dispatch outcome unknown: {exc}", False
 
 
 async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
                       status: str = "ready", limit: int = 50,
-                      dry_run: bool = False, claim_side: str = CLAIM_SIDE) -> dict:
+                      dry_run: bool = False, claim_side: str = CLAIM_SIDE,
+                      read_coder_setting: Callable[[], object] | None = None,
+                      selected_card: dict | None = None,
+                      default_target_slug: str = DEFAULT_TARGET_SLUG) -> dict:
     """Dispatch every Ready card that isn't already claimed or in flight.
 
     The single implementation behind both triggers: the ``run_ready_cards`` MCP
@@ -423,17 +496,12 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
       2. re-read the card. Its body and comments are the prompt, and its status
          is the confirmation that it is still Ready and not something the other
          side moved out from under us between the list and now;
-      3. skip cards naming neither an agent nor a workflow — that's a card
-         someone hasn't finished filling in, not an error;
-      4. claim it (see claim_card) — nothing is written before this point;
-      5. move to running, *then* dispatch. That order is the monolith's and it
-         is deliberate: a card left in Ready after a good dispatch gets swept
-         again and shows up as a duplicate; a card moved to running after a
-         failed dispatch just sits there silently. Sweeping again is the louder
-         and cheaper of the two wrongs;
-      6. stamp the real run id over the claim token.
+      3. resolve and validate the selected agent before writing to the card;
+      4. claim the card and move it to running;
+      5. dispatch and stamp the actual run ID, or recover a rejected claim.
     """
-    cards = await asyncio.to_thread(board.ready_cards, status, limit)
+    cards = ([selected_card] if selected_card is not None
+             else await asyncio.to_thread(board.ready_cards, status, limit))
     results: list[dict] = []
 
     for summary in cards:
@@ -445,7 +513,7 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
         ready_name = summary.get("status")
         try:
             latest = await platform.latest_run(page_id)
-            if latest and latest.get("status") in ("pending", "running"):
+            if latest and latest.get("status") in ("pending", "running", "queued"):
                 results.append({**row, "skipped": "run-already-in-flight",
                                 "run_id": latest.get("id")})
                 continue
@@ -454,40 +522,90 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
             # list_cards' summary lacks body/comments; card() has them but is
             # one page's worth. Merge so the prompt sees everything.
             card = {**summary, **card}
+            row["title"] = card.get("title")
             if ready_name and card.get("status") != ready_name:
                 results.append({**row, "skipped": "no-longer-ready",
                                 "status": card.get("status")})
                 continue
 
-            planned = dispatch_payload(card, build_run_input(card))
-            if planned is None:
-                results.append({**row, "skipped": "card names no agent_slug or workflow_slug"})
-                continue
-            path, payload = planned
+            explicit_agent = (card.get("agent_slug") or "").strip()
+            workflow = (card.get("workflow_slug") or "").strip()
+            default_coder = ""
+            if explicit_agent:
+                await platform.validate_agent(explicit_agent)
+            elif not workflow:
+                default_coder = await resolve_default_coder(
+                    platform, read_coder_setting or board.default_coder)
+            path, payload = dispatch_payload(
+                card, build_run_input(card), default_coder=default_coder,
+                default_target_slug=default_target_slug)
             if dry_run:
                 results.append({**row, "would_dispatch": path,
                                 "target_slug": payload["target_slug"]})
                 continue
 
-            if await asyncio.to_thread(claim_card, board, page_id, side=claim_side) is None:
-                results.append({**row, "skipped": "claim-lost"})
-                continue
-
-            await asyncio.to_thread(board.move, page_id, "running")
-            run_id, error = await platform.dispatch(path, payload)
-            if error:
-                results.append({**row, "error": error})
-                continue
-            if run_id:
+            # Core and the gateway mount the same installed package. Hold its
+            # manifest lock while changing the board and launching. This closes
+            # the check/write gap between workspace triggers. The Notion stamp
+            # still fences legacy dispatchers that do not share this filesystem.
+            manifest = Path(__file__).resolve().parents[1] / "aw-app.json"
+            with manifest.open("rb") as fence:
                 try:
-                    await asyncio.to_thread(board.set_property, page_id,
-                                            RUN_ID_PROPERTY, run_id)
+                    fcntl.flock(fence, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    results.append({**row, "skipped": "workspace-dispatch-in-progress"})
+                    continue
+                current = await asyncio.to_thread(board.card, page_id, with_content=False)
+                if current.get("status") != card.get("status") or any(
+                    current.get(key) != card.get(key)
+                    for key in ("agent_slug", "workflow_slug", "target_slug") if key in current
+                ):
+                    results.append({**row, "skipped": "card-changed"})
+                    continue
+                newest = await platform.latest_run(page_id)
+                if newest and (newest.get("id") != (latest or {}).get("id")
+                               or newest.get("status") in ("pending", "running", "queued")):
+                    results.append({**row, "skipped": "card-run-changed", "run_id": newest.get("id")})
+                    continue
+                previous_stamp = await asyncio.to_thread(
+                    board.properties, page_id, [RUN_ID_PROPERTY])
+                token = await asyncio.to_thread(claim_card, board, page_id, side=claim_side)
+                if token is None:
+                    results.append({**row, "skipped": "claim-lost"})
+                    continue
+
+                await asyncio.to_thread(board.move, page_id, "running")
+                run_id, error, rejected = await platform.dispatch(path, payload)
+                if error and not rejected:
+                    reconciled = await platform.latest_run(page_id)
+                    expected = path.split("/")[3]
+                    if (reconciled and reconciled.get("id") != (latest or {}).get("id")
+                            and reconciled.get("source_slug") == expected
+                            and reconciled.get("workspace") == payload["workspace"]
+                            and reconciled.get("target_slug") == payload["target_slug"]):
+                        run_id = reconciled.get("id")
+                    if not run_id:
+                        results.append({**row, "error": f"{error}. Check card-bound runs before retrying."})
+                        continue
+                if rejected:
+                    stamp = await asyncio.to_thread(board.properties, page_id, [RUN_ID_PROPERTY])
+                    if stamp.get(RUN_ID_PROPERTY) == token:
+                        await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY,
+                                                previous_stamp.get(RUN_ID_PROPERTY) or "")
+                        await asyncio.to_thread(board.move, page_id, status)
+                    if default_coder:
+                        error = (f"{DEFAULT_CODER_SETTING}={default_coder!r} in workspace "
+                                 f"{payload['workspace']!r}: {error}")
+                    results.append({**row, "error": error})
+                    continue
+                try:
+                    await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, run_id)
                 except BoardUnavailable as exc:
-                    # The run is already flying; a missing back-reference is a
-                    # navigation annoyance, not a reason to report failure.
                     row["run_id_stamp_failed"] = str(exc)
-            results.append({**row, "run_id": run_id,
-                            "target_slug": payload["target_slug"]})
+                results.append({**row, "run_id": run_id, "target_slug": payload["target_slug"],
+                                "agent_slug": explicit_agent or default_coder})
+        except CoderDispatchError as exc:
+            results.append({**row, "error": str(exc)})
         except BoardUnavailable as exc:
             results.append({**row, "error": f"board unavailable — {exc}"})
         except Exception as exc:  # pragma: no cover - defensive, per card

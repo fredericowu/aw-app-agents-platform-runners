@@ -596,6 +596,9 @@ async def _list_tools() -> list[Tool]:
                           "properties": {"slug": {"type": "string"}},
                           "required": ["slug"]}),
 
+        Tool(name="get_default_coder",
+             description="Resolve the live workspace default agent for a Kanban Coder handoff.",
+             inputSchema={"type": "object", "properties": {}}),
         Tool(name="get_group_default",
              description="Read a group's saved default for this workspace. Unset returns agent_slug=null; no arbitrary fallback.",
              inputSchema={"type": "object", "properties": {"group_slug": {"type": "string"}},
@@ -860,8 +863,8 @@ async def _list_tools() -> list[Tool]:
                           "comment history, fires the card's AgentSlug (or WorkflowSlug), "
                           "and stamps the run id onto AgentRunId so a human can jump from "
                           "the card to the run.\n\n"
-                          "A card naming neither an agent nor a workflow is reported as "
-                          "skipped, not failed — it just isn't dispatchable yet. Returns one "
+                          "A card naming neither an agent nor a workflow uses the workspace default Coder. "
+                          "Returns one "
                           "row per card, so a partly-failed sweep tells you exactly which "
                           "cards moved."),
              inputSchema={"type": "object",
@@ -3193,6 +3196,14 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
 
         # --- runs ---
+        if name == "get_default_coder":
+            board = _board_client()
+            try:
+                slug = await kanban_dispatch.resolve_default_coder(
+                    kanban_dispatch.PlatformClient(c, BASE), board.default_coder)
+            except kanban_dispatch.CoderDispatchError as exc:
+                return _err(422, str(exc))
+            return _ok({"agent_slug": slug, "workspace": _own_workspace()})
         if name == "get_group_default":
             r = await c.get(f"{BASE}/api/agent-groups/{args['group_slug']}/default",
                             params={"workspace": _own_workspace()})

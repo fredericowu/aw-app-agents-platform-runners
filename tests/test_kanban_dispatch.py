@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+import httpx
+import pytest
 import sys
 from pathlib import Path
 
@@ -78,9 +81,9 @@ def test_agent_wins_when_a_card_names_both():
     assert path == "/api/agents/coder-sonnet/run"
 
 
-def test_card_without_explicit_selection_uses_coders_default():
+def test_card_without_explicit_selection_uses_builtin_coder():
     path, payload = kd.dispatch_payload(_card(agent_slug=None, workflow_slug=None), "X")
-    assert path == "/api/agent-groups/coders/run"
+    assert path == "/api/agents/coder/run"
     assert payload["input"] == {"input": "X"}
 
 
@@ -474,7 +477,7 @@ class FakeBoard:
         return {"ok": True}
 
     def properties(self, page_id, names=None):
-        if self.steal_with is not None:
+        if self.steal_with is not None and self.writes:
             # The other side patched in between our write and our read-back.
             self.props[kd.RUN_ID_PROPERTY] = self.steal_with
             self.steal_with = None
@@ -514,18 +517,23 @@ def test_the_claim_token_names_the_side_that_holds_it():
 # ── the sweep ───────────────────────────────────────────────────────────
 
 class FakePlatform:
-    def __init__(self, *, latest=None, run_id="run-1", error=""):
+    def __init__(self, *, latest=None, run_id="run-1", error="", rejected=False):
         self._latest = latest
         self._run_id = run_id
         self._error = error
+        self._rejected = rejected
+        self.validated = []
         self.dispatched: list[tuple[str, dict]] = []
 
     async def latest_run(self, page_id):
         return self._latest
 
+    async def validate_agent(self, slug, *, setting="AgentSlug"):
+        self.validated.append((slug, setting))
+
     async def dispatch(self, path, payload):
         self.dispatched.append((path, payload))
-        return ("", self._error) if self._error else (self._run_id, "")
+        return ("", self._error, self._rejected) if self._error else (self._run_id, "", False)
 
 
 def _sweep(board, platform, **kw):
@@ -588,13 +596,18 @@ def test_sweep_skips_a_card_the_other_side_already_moved():
     assert board.writes == []
 
 
-def test_sweep_without_explicit_agent_dispatches_saved_coders_default():
+def test_sweep_without_explicit_agent_dispatches_configured_coder():
     board = FakeBoard(cards=[_ready_summary(agent_slug=None)],
                       card={"page_id": "p1", "status": "Ready", "agent_slug": None})
     platform = FakePlatform()
-    out = _sweep(board, platform)
-    assert out["results"][0]["run_id"]
-    assert platform.dispatched[0][0] == "/api/agent-groups/coders/run"
+    out = _sweep(board, platform, read_coder_setting=lambda: "  implementation  ")
+    assert out["results"][0]["run_id"] == "run-1"
+    assert platform.validated == [("implementation", "default_agent_coder")]
+    path, payload = platform.dispatched[0]
+    assert path == "/api/agents/implementation/run"
+    assert payload["workspace"] == kd._this_workspace()
+    assert payload["notion_task_id"] == "p1"
+    assert payload["target_slug"] == "some-target"
 
 
 def test_dry_run_writes_nothing_at_all():
@@ -643,3 +656,75 @@ def test_the_prompt_still_gets_the_body_the_summary_lacks():
 
     sent = platform.dispatched[0][1]["input"]["input"]
     assert "does nothing on mobile" in sent and "tried a CSS fix" in sent
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_default_coder_reset(value):
+    assert kd.coder_setting(value) == "coder"
+
+
+def test_invalid_setting_leaves_card_ready():
+    board = FakeBoard(cards=[_ready_summary(agent_slug=None)], card={"status": "Ready"})
+    platform = FakePlatform()
+    outcome = _sweep(board, platform, read_coder_setting=lambda: "invalid/slug")
+    assert "default_agent_coder" in outcome["results"][0]["error"]
+    assert not board.moves and not board.writes and not platform.dispatched
+
+
+def test_explicit_selection_does_not_fetch_default():
+    def fail():
+        raise AssertionError("explicit card should not read the workspace default")
+
+    board = FakeBoard(cards=[_ready_summary()], card={"status": "Ready"})
+    assert _sweep(board, FakePlatform(), read_coder_setting=fail)["dispatched"] == 1
+
+
+def test_definitive_rejection_restores_owned_claim_and_status():
+    board = FakeBoard(cards=[_ready_summary()], card={"status": "Ready"})
+    board.props[kd.RUN_ID_PROPERTY] = "previous-run"
+    outcome = _sweep(board, FakePlatform(error="dispatch failed: 404", rejected=True))
+    assert outcome["dispatched"] == 0
+    assert board.props[kd.RUN_ID_PROPERTY] == "previous-run"
+    assert board.moves == [("p1", "running"), ("p1", "ready")]
+
+
+@pytest.mark.parametrize("agent,status,error", [
+    ({"slug": "variant", "workspace": "other"}, 200, "belongs to workspace"),
+    ({"slug": "variant", "deleted_at": "yesterday"}, 200, "active agent"),
+    ({}, 404, "HTTP 404"),
+])
+def test_default_coder_agent_validation(monkeypatch, agent, status, error):
+    monkeypatch.setenv("AW_WORKSPACE", "mine")
+
+    async def resolve():
+        transport = httpx.MockTransport(lambda request: httpx.Response(status, json=agent))
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await kd.resolve_default_coder(
+                kd.PlatformClient(client, "https://agents.test"), lambda: "variant")
+
+    with pytest.raises(kd.CoderDispatchError, match=error) as failure:
+        asyncio.run(resolve())
+    assert "default_agent_coder='variant' in workspace 'mine'" in str(failure.value)
+
+
+def test_concurrent_sweeps_only_launch_once():
+    class SharedBoard(FakeBoard):
+        def move(self, page_id, status):
+            self._card["status"] = "In Progress" if status == "running" else "Ready"
+            return super().move(page_id, status)
+
+    class SlowPlatform(FakePlatform):
+        async def dispatch(self, path, payload):
+            await asyncio.sleep(0.02)
+            return await super().dispatch(path, payload)
+
+    board = SharedBoard(cards=[_ready_summary()], card={"status": "Ready"})
+    platform = SlowPlatform()
+
+    async def race():
+        return await asyncio.gather(
+            kd.sweep_ready(board, platform),
+            kd.sweep_ready(board, platform, selected_card=_ready_summary()),
+        )
+
+    assert sum(result["dispatched"] for result in asyncio.run(race())) == 1
+    assert len(platform.dispatched) == 1
