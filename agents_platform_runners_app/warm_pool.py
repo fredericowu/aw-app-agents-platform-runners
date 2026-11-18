@@ -751,7 +751,8 @@ def _sh(s: str | None) -> str:
 
 
 def _with_claude_turn_context(prompt: str, run_id: str, notion_task_id: str | None,
-                              source_device: str | None, parent_run_id: str | None = None) -> str:
+                              source_device: str | None, parent_run_id: str | None = None,
+                              agent_model: str | None = None) -> str:
     """Prepend the CURRENT turn's identity to the prompt text itself, for claude only.
 
     Codex's per-turn staleness (card 3d25bf3b-9510-814a-acd9-d06f9c28d10b) was fixed
@@ -787,6 +788,8 @@ def _with_claude_turn_context(prompt: str, run_id: str, notion_task_id: str | No
         parts.append(f"NOTION_TASK_ID={notion_task_id}")
     if source_device:
         parts.append(f"AW_SOURCE_DEVICE={source_device}")
+    if agent_model:
+        parts.append(f"AW_AGENT_MODEL={agent_model}")
     if run_id:
         parts.append(f"AW_RUN_ID={run_id}")
     if parent_run_id:
@@ -805,6 +808,7 @@ def dispatch_turn(*, client, name: str, run_id: str, prompt: str, cli: str = "cl
                   notion_task_id: str | None = None,
                   source_device: str | None = None,
                   parent_run_id: str | None = None,
+                  agent_model: str | None = None,
                   raw_prompt: bool = False,
                   gateway_bearer_token: str | None = None) -> None:
     """Feed one turn's prompt into the warm container's FIFO.
@@ -876,7 +880,7 @@ def dispatch_turn(*, client, name: str, run_id: str, prompt: str, cli: str = "cl
         payload = (json.dumps({"prompt": prompt}) + "\n").encode("utf-8")
     else:
         content = prompt if raw_prompt else _with_claude_turn_context(
-            prompt, run_id, notion_task_id, source_device, parent_run_id)
+            prompt, run_id, notion_task_id, source_device, parent_run_id, agent_model)
         payload = (json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n").encode("utf-8")
     exec_id = client.api.exec_create(
         c.id, ["sh", "-c", "cat > /home/ubuntu/.aw-warm/fifo_in"], stdin=True,

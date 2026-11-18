@@ -539,3 +539,34 @@ def test_cooldown_wait_fails_open_after_the_bound_with_no_release_jitter(monkeyp
 
     assert sleeps == [1, 1, 1]
     assert jitter_calls == []  # never cleared, so no release jitter
+
+
+def test_resume_model_is_read_per_turn_and_clears_inherited_value(monkeypatch, tmp_path):
+    relay = _load_relay()
+    monkeypatch.setenv("AW_REDIS_URL", "redis://stub")
+    monkeypatch.setenv("AW_SESSION_ID", "session-1")
+    monkeypatch.setenv("AW_AGENT_MODEL", "stale-spawn-model")
+    monkeypatch.setenv("AW_CODEX_CWD", str(tmp_path))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["relay", str(tmp_path)])
+    monkeypatch.setattr(relay.redis, "from_url", lambda *_a, **_kw: _FakeRedis())
+    monkeypatch.setattr(relay, "_codex_version", lambda: "test")
+    monkeypatch.setattr(relay, "CodexTurnUsageCapture", None)
+    monkeypatch.setattr(relay.subprocess, "run", lambda *_a, **_kw: type("Quota", (), {"stdout": ""})())
+
+    config = tmp_path / "config.toml"
+    config.write_text('model = "gpt-6.1-sol"\n')
+    (tmp_path / "turn_env").write_text("export AW_PARENT_RUN_ID=parent\n")
+    monkeypatch.setattr(sys, "stdin", iter(['{"prompt": "first"}', '{"prompt": "next"}']))
+    models = []
+
+    def turn(argv, cwd, env, *_args, **_kwargs):
+        assert argv[:4] == ["codex", "exec", "resume", "session-1"]
+        assert env["AW_PARENT_RUN_ID"] == "parent"
+        models.append(env.get("AW_AGENT_MODEL"))
+        config.unlink(missing_ok=True)
+        return 0, 1, "", False
+
+    monkeypatch.setattr(relay, "_run_codex_turn", turn)
+    assert relay.main() == 0
+    assert models == ["gpt-6.1-sol", None]
