@@ -38,9 +38,15 @@ This is the live version, run the moment the request lands.
    | Vague ask, scope needs shaping | `product-owner` |
    | Scope is clear, it's a design/approach question | `architect` |
    | "Why is X broken" | `debugger` |
-   | Small, well-scoped fix, no design decision | `coder-sonnet` |
+   | Small, well-scoped fix, no design decision | Workspace default Coder |
    | "Review this diff/PR/branch" | `code-reviewer-sonnet` |
    | Docs only | `doc-writer` |
+
+   Honor explicitly selected agents and workflows where supported. For an
+   immediate Coder handoff on an unassigned card, call `get_default_coder`
+   for the card's workspace (initial default `coder`). Pass the returned
+   `agent_slug` as `slug` and surface lookup failures. Resume an existing
+   session with its original agent.
 
    ```
    run_agent_async(slug="<agent>", input="<the ask in full>",
@@ -84,8 +90,7 @@ This is the live version, run the moment the request lands.
      human (check the KB first). QA bouncing on a design question → route
      to Architect, not another coder guess. Scope question → Product Owner.
    - QA rejected the delivery → re-dispatch a coder with QA's comment as
-     input. Same `coder-sonnet` by default; escalate to `coder-opus` on a
-     repeat rejection with the same root cause, by judgement, not a count.
+     input, using the same Coder selection rules.
 
 8. **Verify every "done"/"all green" self-report independently** before
    reporting it onward — `gh pr view`/`gh run list --json ...,createdAt`

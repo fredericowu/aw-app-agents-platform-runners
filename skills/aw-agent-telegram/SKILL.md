@@ -479,7 +479,7 @@ tried this" or "why is it built this way" is often already written down.
 | New feature / vague ask, scope needs shaping | `product-owner` |
 | Scope is already clear, it's a design/approach question | `architect` |
 | "Why is X broken" | `debugger` |
-| Small, well-scoped fix — no design decision in it | `coder-sonnet` directly |
+| Small, well-scoped fix — no design decision in it | Workspace default Coder directly |
 | "Review this diff / PR / branch" | `code-reviewer-sonnet` |
 | Docs only | `doc-writer` |
 
@@ -496,7 +496,7 @@ create_kanban_task(title="...", description="...", input_text="<the user's ask>"
 # → {page_id, url, ...}
 
 run_agent_async(
-  slug="product-owner",                 # or architect / debugger / coder-sonnet / ...
+  slug="product-owner",                 # or architect / debugger / resolved Coder
   input="<the user's ask, in full — quote them, don't paraphrase away detail>",
   target_slug="<a Target for this delivery — create_target first if none exists>",
   notion_task_id="<page_id from create_kanban_task>",
@@ -551,21 +551,25 @@ get_kanban_card(page_id="...", include_body=true, include_comments=true)
   Architect instead of guessing; a scope question goes to the Product
   Owner.
 - **QA rejected the coder's delivery** → re-dispatch a coder with QA's
-  comment as input (see escalation below).
+  comment as input, using the selection rules below.
 
 Keep dispatching and watching — don't stop at "I kicked it off" and wait to
 be asked what happened. A card that's still open after you've gone quiet is
 a dropped thread, not a finished delegation.
 
-### 5. Default coder, escalate on judgement — not a hard count
+### 5. Select the Coder for implementation and QA rework
 
-Default to `coder-sonnet` unless the user names a different model. If a
-card keeps bouncing back from QA on the same coder, that's a signal to use
-judgement on, not a counter to enforce mechanically: a repeat rejection —
-especially one QA flags as the same root cause as last time — is a good
-reason to re-dispatch to `coder-opus` instead of trying `coder-sonnet`
-again. There's no field on the card that tracks this; hold it in your own
-read of the conversation.
+Honor an explicitly requested agent. If the card has an explicit assignment
+or workflow, use it where supported. For an immediate Coder handoff on an
+unassigned card, call `get_default_coder` for the card's workspace. The
+initial setting is `coder`. Pass the returned `agent_slug` as `slug` to
+`run_agent_async`, with the card and Target. Surface a lookup failure
+so the setting can be corrected. Resume an existing session with its
+original agent.
+
+For ordinary QA rework, include QA's comment and use the same selection
+rules. Route design questions to Architect and scope questions to Product
+Owner.
 
 ### 6. Watching a CI/CD pipeline directly — `run_monitor_async`
 
