@@ -132,7 +132,7 @@ def board_base_url(*, prefer_loopback: bool = False) -> str:
 
 
 class BoardClient:
-    """The narrow slice of aw-app-notion this module needs."""
+    """Workspace-local Kanban and default Coder reads and writes."""
 
     def __init__(self, *, base_url: str | None = None) -> None:
         self._base = (base_url or "").rstrip("/") or None
@@ -140,6 +140,7 @@ class BoardClient:
     def _request(self, method: str, path: str, body: dict | None = None,
                  timeout: float = DEFAULT_TIMEOUT_S) -> dict:
         base = self._base or board_base_url()
+        service = "agents-platform-runners" if path.startswith(RUNNERS_PREFIX + "/") else "aw-app-notion"
         key = os.environ.get(API_KEY_VAR) or _from_env_file(API_KEY_VAR)
         if not key:
             raise BoardUnavailable(
@@ -159,12 +160,12 @@ class BoardClient:
             detail = exc.read().decode("utf-8", "replace")[:300]
             if exc.code == 404:
                 raise BoardUnavailable(
-                    "aw-app-notion is not installed or its kanban routes are missing "
+                    f"{service} is not installed or the requested route is missing "
                     f"({detail})") from None
-            raise BoardUnavailable(f"aw-app-notion returned {exc.code}: {detail}") from None
+            raise BoardUnavailable(f"{service} returned {exc.code}: {detail}") from None
         except urllib.error.URLError as exc:
             raise BoardUnavailable(
-                f"could not reach aw-app-notion at {base}: {exc.reason}") from None
+                f"could not reach {service} at {base}: {exc.reason}") from None
         except (OSError, http.client.HTTPException) as exc:
             # Response-level timeouts/resets (socket.timeout == TimeoutError,
             # ConnectionResetError, ...) and malformed-response errors
@@ -176,16 +177,18 @@ class BoardClient:
             # per-card BoardUnavailable guard and the MCP tool handler) and
             # kills the whole batch instead of just this card.
             raise BoardUnavailable(
-                f"aw-app-notion at {base} did not respond in time: {exc}") from None
+                f"{service} at {base} did not respond in time: {exc}") from None
         try:
             return json.loads(raw.decode() or "{}")
         except ValueError:
             raise BoardUnavailable(
-                f"aw-app-notion returned a non-JSON body: {raw[:200]!r}") from None
+                f"{service} returned a non-JSON body") from None
 
     def default_coder(self) -> str:
         try:
             result = self._request("GET", f"{RUNNERS_PREFIX}/kanban/default-coder")
+            if not isinstance(result, dict):
+                raise ValueError("workspace lookup did not return an object")
             if result.get("workspace") != _this_workspace():
                 raise ValueError("workspace lookup returned a different workspace")
             slug = result["agent_slug"]

@@ -196,14 +196,19 @@ Call `create_target` with:
 | `tags` | 5-10 tags. These drive lesson retrieval and lesson_forecast. Include task category + domain tags. |
 | `notes` | Anything the next conductor would want to know — e.g. "first delivery in this domain, no priors, expect high variance". |
 
-For automatic role selection, use `run_agent_async(group_slug="coders", input="...",
-target_slug="...")` (or `group_slug="qas"` after merge and deployment). The server
-resolves the saved default for the authenticated tenant and this workspace. Read it
-with `get_group_default(group_slug="coders")`; `agent_slug=null` means unconfigured,
-and dispatch fails clearly without choosing an arbitrary member. Passing `slug`
-alongside `group_slug` explicitly selects that member instead. Other variants stay
-selectable. Existing single-agent calls are unchanged. A resumed session must belong
-to the selected member. Exact `qa` and `qa-*` share the same deduplication guard;
+For a Kanban Coder handoff, use the card's explicit agent or workflow when
+it has one. Leave `AgentSlug` blank if the Ready sweep can pick the workspace's
+**Default Kanban coder** when it launches the card. If the flow requires an
+immediate Coder handoff for an unassigned card, call `get_default_coder()`.
+Pass the returned `agent_slug` as `slug` to `run_agent_async`, with the card's
+`notion_task_id` and Target. Surface a failed lookup so the workspace setting
+can be fixed. Resume an existing session with its original agent.
+
+For cardless role selection, use `run_agent_async(group_slug="coders", ...)`
+and `get_group_default(group_slug="coders")`. QA handoffs use `group_slug="qas"`
+after merge and verified deployment. In a group call, supplying `slug`
+explicitly selects that member. Exact `qa` and `qa-*` share the same
+deduplication guard.
 409 means read the existing run, never retry with `qa_rerun` to force a duplicate.
 
 **Then — and this is where conductors most often slip — pass `target_slug`
