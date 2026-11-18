@@ -270,6 +270,18 @@ runs legitimately have no parent, so nothing enforces the line's presence.
 It exists so a PR can be traced back to the run chain that produced it via
 `gh api`/`gh pr view`, grep-able on demand.
 
+## Record the creating run's model on the PR
+
+When opening a PR, add `Agent-Model: <value>` to the body footer beside
+`AW-Parent-Run-Id` if the current run exposes a model. In warm Claude,
+use `AW_AGENT_MODEL` from the current turn's execution-context header.
+In Codex and cold runners, use the `AW_AGENT_MODEL` environment variable.
+
+Omit the line when the field is absent or empty. Use only the runner's
+bounded identifier. Preserve the opening run's line on review or fix
+pushes and when editing the PR body. Keep the existing run and parent
+provenance intact.
+
 ## Handing off to QA
 
 **QA reviews MERGED work only.** A review of an open PR verifies claims about

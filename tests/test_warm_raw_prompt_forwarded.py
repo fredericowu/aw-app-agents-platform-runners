@@ -97,3 +97,23 @@ def test_a_job_from_an_older_caller_defaults_to_not_raw(dispatched):
     assert "raw_prompt" not in job, "precondition: the key really is absent"
 
     assert dispatched(job)["raw_prompt"] is False
+
+
+def test_warm_claude_launch_model_controls_reuse_and_turn_context(dispatched, monkeypatch):
+    epochs = []
+
+    def get_or_create(**kwargs):
+        epochs.append(kwargs["epoch_hash"])
+        return "aw-warm-sess-1"
+
+    monkeypatch.setattr(warm_pool, "get_or_create", get_or_create)
+    first = _job(model="claude-sonnet-4-6", run_id="child", parent_run_id="parent")
+    context = dispatched(first)
+    assert context["agent_model"] == "claude-sonnet-4-6"
+    assert context["parent_run_id"] == "parent"
+
+    dispatched(dict(first, run_id="child-next"))
+    assert epochs[0] == epochs[1]
+
+    assert dispatched(_job())["agent_model"] is None
+    assert epochs[2] != epochs[1]

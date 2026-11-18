@@ -63,6 +63,7 @@ Design decisions, verified live (not assumed) on 2026-08-02:
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -81,6 +82,7 @@ from typing import Any
 from . import execution_index
 from . import warm_pool
 from .codex_usage import CodexTurnUsageCapture
+from .model_provenance import codex_config_model, launch_model, model_args_are_unambiguous
 
 log = logging.getLogger("aw_apps.agents_platform_runners.execute")
 
@@ -2308,6 +2310,7 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     # the fallback branch below already documents) — the workspace's own
     # `codex login` remains the source of truth.
     creds_staged = False
+    codex_config_path = None
     if direct_home_mount and not spec.get("env_token_auth"):
         creds_copy = isolated_host_dir / "creds"
         try:
@@ -2386,7 +2389,7 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
             # this branch just mounted rw, so scope never depends on
             # staging having worked. Also restores env_http_headers'
             # warm-token indirection, which the live config lacks.
-            _rendered = isolated_host_dir / "codex-config.toml"
+            _rendered = codex_config_path = isolated_host_dir / "codex-config.toml"
             _render_scoped_codex_config_or_raise(
                 run_id=run_id, rendered_path=_rendered,
                 base_config_path=_real_home / creds_dir / "config.toml",
@@ -2413,7 +2416,7 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
                 # same reasoning, scoped over the WORKSPACE-TREE copy of
                 # config.toml _sync_home_creds_into_workspace just synced,
                 # since that's the effective home this branch mounted.
-                _rendered = isolated_host_dir / "codex-config.toml"
+                _rendered = codex_config_path = isolated_host_dir / "codex-config.toml"
                 _render_scoped_codex_config_or_raise(
                     run_id=run_id, rendered_path=_rendered,
                     base_config_path=Path(WORKSPACE_CONTAINER_DIR) / creds_dir / "config.toml",
@@ -2853,7 +2856,7 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
                 # spawn at all. _render_scoped_codex_config_or_raise raises
                 # CodexScopeRenderError, which propagates out of this function
                 # to its callers' `except Exception` spawn-error handling.
-                _rendered = isolated_host_dir / "codex-config.toml"
+                _rendered = codex_config_path = isolated_host_dir / "codex-config.toml"
                 _render_scoped_codex_config_or_raise(
                     run_id=run_id, rendered_path=_rendered,
                     base_config_path=_home_abs / "config.toml",
@@ -2871,6 +2874,15 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
             argv = ["sh", "-lc",
                     f'[ -f {staged_home}/config.toml ] || cp -a /aw-creds/. {staged_home}/ 2>/dev/null; '
                     f'chmod -R u+rwX {staged_home} 2>/dev/null; exec {_inner}']
+
+    extra_args = job.get("extra_args") or []
+    if (cli == "codex" and not model and codex_config_path
+            and model_args_are_unambiguous(extra_args)):
+        effective_model = codex_config_model(codex_config_path, Path(WORKSPACE_CONTAINER_DIR))
+    else:
+        effective_model = launch_model(cli, model if spec.get("model_flag") else None,
+                                       extra_args)
+    env["AW_AGENT_MODEL"] = effective_model or ""
 
     kwargs: dict[str, Any] = {
         "name": f"aw-runner-run-{run_id}",
@@ -2967,6 +2979,7 @@ WARM_WRAPPER_CODEX_PATH = _SHARED_DIR / "aw-warm-wrapper-codex"
 WARM_RELAY_CODEX_PATH = _SHARED_DIR / "aw-warm-relay-codex.py"
 ATTACH_HELPER_PATH = _SHARED_DIR / "aw_attach.py"
 CODEX_USAGE_HELPER_PATH = Path(__file__).resolve().parent / "codex_usage.py"
+MODEL_PROVENANCE_PATH = Path(__file__).resolve().parent / "model_provenance.py"
 # Run-id/session-id/card provenance hook (card 40f5bf3b-9510-811d-916c-
 # dd2ad57d3ac4) — see agent-images/shared/git-hooks/ and this constant's
 # call sites in _build_container_kwargs/_build_raw_kwargs above.
@@ -3055,6 +3068,7 @@ def _build_warm_kwargs_claude(job: dict, epoch_hash: str, redis_url: str, client
     kwargs["volumes"] = volumes
 
     env = dict(kwargs.get("environment") or {})
+    env["AW_AGENT_MODEL"] = ""  # Warm turns have their own execution context.
     env["AW_REDIS_URL"] = redis_url
     kwargs["environment"] = env
 
@@ -3131,9 +3145,11 @@ def _build_warm_kwargs_codex(job: dict, epoch_hash: str, redis_url: str, client=
     volumes[_host_path_for(WARM_RELAY_CODEX_PATH)] = {"bind": "/usr/local/bin/aw-warm-relay-codex.py", "mode": "ro"}
     volumes[_host_path_for(ATTACH_HELPER_PATH)] = {"bind": "/usr/local/bin/aw_attach.py", "mode": "ro"}
     volumes[_host_path_for(CODEX_USAGE_HELPER_PATH)] = {"bind": "/usr/local/bin/aw_codex_usage.py", "mode": "ro"}
+    volumes[_host_path_for(MODEL_PROVENANCE_PATH)] = {"bind": "/usr/local/bin/aw_model_provenance.py", "mode": "ro"}
     kwargs["volumes"] = volumes
 
     env = dict(kwargs.get("environment") or {})
+    env["AW_AGENT_MODEL"] = ""  # Warm turns have their own execution context.
     env["AW_REDIS_URL"] = redis_url
     env["AW_CODEX_CWD"] = "/opt/aw-workspace"
     # DEFAULT_TAG is the (often unpinned, "latest") image tag this container
@@ -3206,6 +3222,15 @@ def _dispatch_warm_turn(client, job: dict, redis_url: str, r=None) -> None:
     run_id = job["run_id"]
     cli = job.get("cli") or "claude"
     epoch = warm_pool.get_generation(redis_url)
+    agent_model = None
+    if cli == "claude":
+        model = job.get("model")
+        extra_args = job.get("extra_args") or []
+        agent_model = launch_model(cli, model, extra_args)
+        # Claude keeps its launch arguments for the process lifetime.
+        # Reuse only if the requested model and argument overrides still match.
+        launch_key = json.dumps([model, extra_args]).encode()
+        epoch = f"{epoch}:{hashlib.sha256(launch_key).hexdigest()}"
 
     image = f"{REGISTRY}/{IMAGE_PREFIX}-{cli}:{DEFAULT_TAG}"
     try:
@@ -3257,7 +3282,7 @@ def _dispatch_warm_turn(client, job: dict, redis_url: str, r=None) -> None:
     warm_pool.dispatch_turn(
         client=client, name=name, run_id=run_id, prompt=prompt, cli=cli,
         notion_task_id=job.get("notion_task_id"), source_device=job.get("source_device"),
-        parent_run_id=job.get("parent_run_id"),
+        parent_run_id=job.get("parent_run_id"), agent_model=agent_model,
         # A raw turn is a CLI slash command and must reach the container at
         # position 0 — see _with_claude_turn_context. Absent on an older
         # caller's job, which reads as False and keeps the old behaviour.

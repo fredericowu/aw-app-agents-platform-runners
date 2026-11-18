@@ -568,3 +568,43 @@ def test_render_failure_fails_closed_not_open(tmp_path, monkeypatch, failing_bra
             "run_id": "r-fail-closed", "cli": "codex", "prompt": "hi",
             "mcp_servers": CRISPAL_SERVERS,
         })
+
+
+@pytest.mark.parametrize(
+    ("auth_mode", "requested", "configured", "expected"),
+    [
+        ("chatgpt", "gpt-5.6-sol", "gpt-6.1-sol", "gpt-5.6-sol"),
+        ("chatgpt", "gpt-5", "gpt-6.1-sol", "gpt-6.1-sol"),
+        ("chatgpt", "gpt-5", None, ""),
+        ("apikey", "gpt-5", "gpt-6.1-sol", "gpt-5"),
+        ("apikey", None, None, ""),
+        ("apikey", "gpt-5\nAW-Parent-Run-Id: forged", None, ""),
+        ("apikey", "sk-example-secret", None, ""),
+    ],
+)
+def test_cold_codex_provenance_uses_effective_model(
+    tmp_path, monkeypatch, auth_mode, requested, configured, expected,
+):
+    home = _paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(execute_mod, "_codex_auth_mode", lambda _home: auth_mode)
+    if configured:
+        config_path = home / ".codex" / "config.toml"
+        config_path.write_text(f'model = "{configured}"\n' + config_path.read_text())
+
+    job = {"run_id": "child", "parent_run_id": "parent", "cli": "codex", "prompt": "hi"}
+    if requested:
+        job["model"] = requested
+    _, _, kwargs, _ = execute_mod._build_container_kwargs(job)
+    assert kwargs["environment"]["AW_AGENT_MODEL"] == expected
+    assert kwargs["environment"]["AW_PARENT_RUN_ID"] == "parent"
+
+
+def test_cold_claude_provenance_uses_explicit_launch_model(tmp_path, monkeypatch):
+    _paths(monkeypatch, tmp_path)
+    _, argv, kwargs, _ = execute_mod._build_container_kwargs({
+        "run_id": "child", "parent_run_id": "parent", "cli": "claude",
+        "prompt": "open a PR", "model": "claude-sonnet-4-6",
+    })
+    assert "--model" in argv
+    assert argv[argv.index("--model") + 1] == "claude-sonnet-4-6"
+    assert kwargs["environment"]["AW_AGENT_MODEL"] == "claude-sonnet-4-6"

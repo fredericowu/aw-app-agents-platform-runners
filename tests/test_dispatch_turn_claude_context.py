@@ -230,3 +230,19 @@ def test_an_ordinary_turn_is_unaffected_by_the_raw_flag_defaulting_off():
     assert content.startswith("[SYSTEM]\nExecution context for this turn: ")
     assert "NOTION_TASK_ID=task-9" in content
     assert content.endswith("do the thing")
+
+
+def test_claude_model_is_local_to_the_turn():
+    client, _container, sock = _fake_client_and_container()
+    warm_pool.dispatch_turn(
+        client=client, name="aw-warm-claude-session", run_id="first",
+        prompt="open a PR", agent_model="claude-sonnet-4-6",
+    )
+    assert "AW_AGENT_MODEL=claude-sonnet-4-6 " in _sent_content(sock)
+
+    sock._sock.sendall.reset_mock()
+    warm_pool.dispatch_turn(
+        client=client, name="aw-warm-claude-session", run_id="next",
+        prompt="continue", agent_model=None,
+    )
+    assert "AW_AGENT_MODEL" not in _sent_content(sock)

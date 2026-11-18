@@ -52,6 +52,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 
 import redis
 
@@ -74,6 +75,12 @@ except Exception as _e:  # pragma: no cover - depends on the mount
     CodexTurnUsageCapture = None
     print(f"aw-warm-relay-codex: usage capture unavailable ({_e})",
           file=sys.stderr)
+
+
+try:
+    from aw_model_provenance import codex_config_model
+except ImportError:  # Source checkout tests import the relay directly.
+    from agents_platform_runners_app.model_provenance import codex_config_model
 
 
 def _read(path: str, default: str = "") -> str:
@@ -631,14 +638,18 @@ def main() -> int:
         # Mirrors the cold path's own argv assembly for codex
         # (execute.py::_build_container_kwargs): subcommand, `resume <id>`,
         # the prompt positionally, then skip-approvals, then default_extra.
-        # Model is deliberately absent — a ChatGPT-account codex rejects any
-        # -c model= override, which is why the cold path drops it too.
+        # Warm Codex keeps its existing resume selection (config or CLI
+        # resume defaults) instead of applying the dispatch model flag.
         argv = ["codex", "exec", "resume", session_id, prompt,
                 "--dangerously-bypass-approvals-and-sandbox",
                 "--skip-git-repo-check", "--json"]
 
         env = dict(os.environ)
         env.update(_turn_env(rundir))
+        env.pop("AW_AGENT_MODEL", None)
+        model = codex_config_model(Path(codex_home) / "config.toml", Path(cwd))
+        if model:
+            env["AW_AGENT_MODEL"] = model
         turn_started = time.monotonic()
         _diag(codex_home, "resume_start", session_id=session_id, run_id=run_id,
               codex_version=codex_version, agent_tag=agent_tag)
