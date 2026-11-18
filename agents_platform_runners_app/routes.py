@@ -24,6 +24,7 @@ from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, 
 from . import codex_scope_canary as codex_scope_canary_mod
 from . import execute as execute_mod
 from . import execution_index as execution_index_mod
+from . import kanban_dispatch
 from . import notion_subscription as notion_subscription_mod
 from . import notion_token_sync as notion_token_sync_mod
 from . import observability_push as observability_push_mod
@@ -120,6 +121,40 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
         presented = request.headers.get("x-runner-secret", "")
         if presented != secret:
             raise HTTPException(401, "invalid or missing X-Runner-Secret")
+
+    @app.get("/kanban/default-coder")
+    async def default_coder() -> dict:
+        try:
+            slug = kanban_dispatch.coder_setting(cfg.get(kanban_dispatch.DEFAULT_CODER_SETTING))
+        except kanban_dispatch.CoderDispatchError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"agent_slug": slug, "workspace": kanban_dispatch._this_workspace()}
+
+    @app.post("/kanban/execute/{page_id}", dependencies=[Depends(require_execute_secret)])
+    async def execute_kanban_card(page_id: uuid.UUID, data: dict = Body(...)) -> dict:
+        workspace = kanban_dispatch._this_workspace()
+        if data.get("workspace") != workspace:
+            raise HTTPException(422, f"Dispatcher belongs to workspace {workspace!r}")
+        status = data.get("status")
+        status_name = data.get("status_name")
+        if status not in ("ready", "backlog") or not isinstance(status_name, str) or not status_name:
+            raise HTTPException(422, "Expected the card's Ready or Backlog status")
+        token = cfg.get("agents_platform_token")
+        if not token:
+            raise HTTPException(503, f"Agents Platform dispatcher unavailable in workspace {workspace!r}")
+        board = kanban_dispatch.BoardClient(
+            base_url=kanban_dispatch.board_base_url(prefer_loopback=True))
+        async with httpx.AsyncClient(timeout=30, headers={"Authorization": f"Bearer {token}"}) as client:
+            outcome = await kanban_dispatch.sweep_ready(
+                board, kanban_dispatch.PlatformClient(client, platform_base_mod.resolve(cfg)),
+                status=status, selected_card={"page_id": str(page_id), "status": status_name},
+                default_target_slug="kanban-tasks",
+                read_coder_setting=lambda: cfg.get(kanban_dispatch.DEFAULT_CODER_SETTING))
+        row = outcome["results"][0]
+        if not row.get("run_id") or row.get("skipped"):
+            return {"ok": False, "reason": row.get("error") or row.get("skipped") or "no run started"}
+        return {"ok": True, "card_title": row["title"], "agent_slug": row["agent_slug"],
+                "run_id": row["run_id"]}
 
     @app.get("/status")
     async def status() -> dict:

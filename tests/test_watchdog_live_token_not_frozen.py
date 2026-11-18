@@ -133,7 +133,8 @@ def test_kanban_sweep_tick_uses_the_live_config_token(monkeypatch):
     _FakeAsyncClient.captured_headers = []
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
 
-    async def _fake_sweep_ready(board, platform):
+    async def _fake_sweep_ready(board, platform, *, read_coder_setting):
+        assert read_coder_setting() == "implementation"
         return {"considered": 0}
 
     monkeypatch.setattr(plugin_mod.kanban_dispatch_mod, "sweep_ready", _fake_sweep_ready)
@@ -149,6 +150,7 @@ def test_kanban_sweep_tick_uses_the_live_config_token(monkeypatch):
 
     plugin._live_config["agents_platform_token"] = "rotated-by-refresh-watchdog"
 
+    plugin._live_config["default_agent_coder"] = "implementation"
     asyncio.run(sweep_fn())
 
     assert _FakeAsyncClient.captured_headers == [

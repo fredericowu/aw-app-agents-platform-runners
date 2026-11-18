@@ -648,7 +648,9 @@ class AgentsPlatformRunnersAppPlugin:
             try:
                 async with httpx.AsyncClient(timeout=30, headers=platform_headers) as c:
                     result = await kanban_dispatch_mod.sweep_ready(
-                        board, kanban_dispatch_mod.PlatformClient(c, base))
+                        board, kanban_dispatch_mod.PlatformClient(c, base),
+                        read_coder_setting=lambda: self._live_config.get(
+                            kanban_dispatch_mod.DEFAULT_CODER_SETTING))
             except kanban_dispatch_mod.BoardUnavailable as exc:
                 log.warning("kanban sweep: board unreachable at %s — %s", board_url, exc)
                 return
