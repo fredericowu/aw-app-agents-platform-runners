@@ -18,7 +18,7 @@ has a verdict, establish what warrants another review before repeating it.
 Post-deployment verification and explicitly isolated replay fixtures have
 their own review scope.
 
-Search the knowledge base using the subject of the delivery before reading
+Search the knowledge base using a few subject terms from the delivery before reading
 code or choosing an approach. Inspect affected callers and changed failure
 paths as part of code verification.
 
@@ -54,6 +54,19 @@ in this session.
   Capture screenshot proof after the interaction and attach it with
   `attach_kanban_file` on a card-bound review. Reference the attachment in
   the verdict. For cardless QA include the screenshot artifact reference.
+
+## Target diagnostic evidence
+
+Scope run lists to the card, target or session and use a small limit.
+Give CodeGraph the affected symbol names and a bounded `maxFiles`.
+Use `get_run_detail` metadata first. Request a small event window with
+`full_record=false`, a limit and relevant event kinds when needed.
+
+Capture screenshots directly to a shared file or artifact with Playwright.
+Return the path or artifact link and metadata. Open the file in a native
+image viewer when inspecting its contents, and attach the original file
+as evidence. Keep screenshot bytes out of text and diagnostic traces.
+Use the original referenced artifact for a historical screenshot.
 
 ## Verify and record evidence
 

@@ -1594,7 +1594,7 @@ async def _list_tools() -> list[Tool]:
                  "Its own pgvector table, separate from any knowledge-base search: "
                  "this never returns docs. Returns one summary block per matching run "
                  "(status, agent, target, ended_at, cost, the excerpt that matched) — "
-                 "call get_run_detail(run_id=...) for the full record; this tool only "
+                 "call get_run_detail(run_id=..., full_record=true) for the full record; this tool only "
                  "finds the run, it doesn't open it.\n\n"
                  "Covers roughly the last 30 days (the index is a digest with a "
                  "retention sweep, not an archive — AP-MT keeps the full run record "
@@ -1647,21 +1647,27 @@ async def _list_tools() -> list[Tool]:
                                          "category": {"type": "string",
                                                       "description": "Filter by Run.category: 'work' (real agent/workflow dispatches) or 'monitor' (shell-wrapper dispatches like monitor-shell). Omit for no filter."}}}),
         Tool(name="get_run_detail",
-             description=("FULL record for one Run: untruncated input/output, status, "
-                          "timestamps, target_slug, agent/source_slug, cost, tokens, "
-                          "error, session_id — PLUS the ordered event trace (tool_call/"
-                          "tool_result/node_start/node_end/…). Combines `get_run` + "
-                          "`run_events` in a single call. Use plain `get_run`/"
-                          "`run_status` instead if you don't need the event trace."),
+             description=("Bounded run metadata and persisted usage. No events are "
+                          "fetched by default. Set full_record=true for complete "
+                          "input/output or request an event window for diagnostics. "
+                          "Event windows omit inline image bytes and preserve artifact references. "
+                          "Use run_events for the original trace."),
              inputSchema={"type": "object",
                           "properties": {"run_id": {"type": "string"},
-                                         "events_limit": {"type": "integer",
-                                                           "description": "Cap on returned events. Default 500."}},
+                                         "full_record": {"type": "boolean"},
+                                         "events_limit": {"type": "integer", "minimum": 1,
+                                                          "maximum": 500,
+                                                          "description": "Fetch this many events. "
+                                                          "Also returns full record for legacy calls unless full_record=false."},
+                                         "events_after_ts": {"type": "string",
+                                                             "description": "ISO8601 event cursor (exclusive)."},
+                                         "event_kinds": {"type": "string",
+                                                         "description": "Comma-separated event kinds."}},
                           "required": ["run_id"]}),
         Tool(name="tool_usage_metrics",
              description=("Tool-usage METRICS across runs: counts and per-call metadata "
                           "only — tool name, run/session/agent, timestamp, duration. "
-                          "`get_run_detail(run_id=...)` opens one specific run's full "
+                          "`run_events(run_id=...)` opens one specific run's "
                           "event trace instead; use that when you already know which run "
                           "you want, use this tool to count or enumerate calls across "
                           "many runs.\n\n"
@@ -2656,6 +2662,48 @@ def _err(status: int, text: str, **extra: Any) -> list[TextContent]:
     return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
 
+_RUN_SUMMARY_FIELDS = (
+    "id", "kind", "category", "status", "target_slug", "target_id", "source_slug",
+    "session_id", "notion_task_id", "workspace", "model_slug", "parent_run_id",
+    "flow_run_id", "flow_slug", "flow_needs_human", "initiator_kind",
+    "started_at", "ended_at", "tokens_in", "tokens_out", "cost_usd", "error",
+)
+_INLINE_IMAGE = re.compile(
+    r"(?:data:image/[^;,\s]+;base64,|iVBORw0KGgo|/9j/|UklGR|R0lGOD)"
+    r"[A-Za-z0-9+/_=-]{64,}",
+    re.IGNORECASE,
+)
+
+
+def _run_detail_summary(run: dict) -> dict:
+    projection = {}
+    for key in _RUN_SUMMARY_FIELDS:
+        value = run.get(key)
+        if isinstance(value, str):
+            value = _INLINE_IMAGE.sub("[image omitted]", value)
+            if len(json.dumps(value)) > 128:
+                value = value[:10] + "…"
+        elif type(value) not in (int, float, bool) or len(str(value)) > 32:
+            value = None
+        projection[key] = value
+    return projection
+
+
+def _event_without_image_bytes(value: Any) -> Any:
+    if isinstance(value, dict):
+        is_image = (
+            value.get("type") == "image"
+            or str(value.get("mimeType", value.get("mime_type", ""))).startswith("image/")
+        )
+        return {key: "[image omitted]" if is_image and key in {"data", "base64"}
+                else _event_without_image_bytes(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_event_without_image_bytes(item) for item in value]
+    if isinstance(value, str):
+        return _INLINE_IMAGE.sub("[image omitted]", value)
+    return value
+
+
 # Structural UUID shape only — 36 chars, 5 hyphenated hex groups (8-4-4-4-12).
 # Deliberately does NOT constrain the version/variant nibble: live session ids
 # include v4 (the common case), v7 (Codex mints these), and v3. A "canonical"
@@ -2732,7 +2780,7 @@ def _format_execution_history(query: str, results: list[dict], n_results: int) -
             f"target: {meta.get('target_slug', '?')} | ended_at: {meta.get('ended_at', '?')} | "
             f"cost: {meta.get('cost_usd', '?')}\n"
             f"matched: {excerpt}\n"
-            f"→ call get_run_detail(run_id={rid!r}) for the full record\n"
+            f"→ call get_run_detail(run_id={rid!r}, full_record=True) for the full record\n"
         )
     return "\n".join(lines)
 
@@ -3716,13 +3764,32 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "get_run_detail":
             run_id = args["run_id"]
-            r = await c.get(f"{BASE}/api/runs/{run_id}")
+            limit = args.get("events_limit")
+            if limit is not None and (type(limit) is not int or not 1 <= limit <= 500):
+                return _err(400, "events_limit must be an integer from 1 through 500")
+            filters = {"after_ts": args.get("events_after_ts"), "kinds": args.get("event_kinds")}
+            event_params = {key: value for key, value in filters.items() if value}
+            full_record = args.get("full_record", limit is not None)
+            r = await c.get(f"{BASE}/api/runs/{run_id}",
+                            params={} if full_record else {"summary": "true"})
             if r.status_code != 200:
                 return _err(r.status_code, r.text)
-            run = r.json()
-            ev_params = {"limit": str(args.get("events_limit") or 500)}
-            er = await c.get(f"{BASE}/api/runs/{run_id}/events", params=ev_params)
-            run["events"] = er.json() if er.status_code == 200 else []
+            run = r.json() if full_record else _run_detail_summary(r.json())
+            if limit is None and not event_params:
+                return _ok(run)
+            limit = limit or 20
+            event_params["limit"] = str(limit)
+            try:
+                er = await c.get(f"{BASE}/api/runs/{run_id}/events", params=event_params)
+                if er.status_code != 200:
+                    run["events_error"] = {"status": er.status_code}
+                else:
+                    events = er.json()
+                    run["events"] = _event_without_image_bytes(events)
+                    if len(events) == limit:
+                        run["events_next_after_ts"] = events[-1]["ts"]
+            except (httpx.RequestError, ValueError) as exc:
+                run["events_error"] = {"reason": type(exc).__name__}
             return _ok(run)
         if name == "tool_usage_metrics":
             params = {}
