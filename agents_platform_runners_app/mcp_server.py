@@ -1661,6 +1661,8 @@ async def _list_tools() -> list[Tool]:
                                                           "Also returns full record for legacy calls unless full_record=false."},
                                          "events_after_ts": {"type": "string",
                                                              "description": "ISO8601 event cursor (exclusive)."},
+                                         "events_after_id": {"type": "string",
+                                                             "description": "Event id paired with events_after_ts (tie-break for rows sharing a timestamp). Pass the events_next_after_id returned with events_next_after_ts."},
                                          "event_kinds": {"type": "string",
                                                          "description": "Comma-separated event kinds."}},
                           "required": ["run_id"]}),
@@ -3767,11 +3769,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             limit = args.get("events_limit")
             if limit is not None and (type(limit) is not int or not 1 <= limit <= 500):
                 return _err(400, "events_limit must be an integer from 1 through 500")
-            filters = {"after_ts": args.get("events_after_ts"), "kinds": args.get("event_kinds")}
+            filters = {"after_ts": args.get("events_after_ts"), "after_id": args.get("events_after_id"),
+                       "kinds": args.get("event_kinds")}
             event_params = {key: value for key, value in filters.items() if value}
             full_record = args.get("full_record", limit is not None)
             r = await c.get(f"{BASE}/api/runs/{run_id}",
-                            params={} if full_record else {"summary": "true"})
+                            params={} if full_record else {"summary": "true", "metadata": "true"})
             if r.status_code != 200:
                 return _err(r.status_code, r.text)
             run = r.json() if full_record else _run_detail_summary(r.json())
@@ -3788,6 +3791,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                     run["events"] = _event_without_image_bytes(events)
                     if len(events) == limit:
                         run["events_next_after_ts"] = events[-1]["ts"]
+                        run["events_next_after_id"] = events[-1].get("id")
             except (httpx.RequestError, ValueError) as exc:
                 run["events_error"] = {"reason": type(exc).__name__}
             return _ok(run)
