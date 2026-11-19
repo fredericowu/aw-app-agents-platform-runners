@@ -1664,7 +1664,9 @@ async def _list_tools() -> list[Tool]:
                                          "events_after_id": {"type": "string",
                                                              "description": "Event id paired with events_after_ts (tie-break for rows sharing a timestamp). Pass the events_next_after_id returned with events_next_after_ts."},
                                          "event_kinds": {"type": "string",
-                                                         "description": "Comma-separated event kinds."}},
+                                                         "description": "Comma-separated event kinds."},
+                                         "event_id": {"type": "string",
+                                                      "description": "Return exactly this one event in full (no per-string cap), searched within the newest 500 events, or after events_after_ts/events_after_id when given."}},
                           "required": ["run_id"]}),
         Tool(name="tool_usage_metrics",
              description=("Tool-usage METRICS across runs: counts and per-call metadata "
@@ -2716,7 +2718,7 @@ def _cap_event_strings(value: Any) -> Any:
     if isinstance(value, list):
         return [_cap_event_strings(v) for v in value]
     if isinstance(value, str) and len(value) > _EVENT_STRING_CAP:
-        return value[:_EVENT_STRING_CAP] + f"… [+{len(value) - _EVENT_STRING_CAP} chars; use run_events for the original]"
+        return value[:_EVENT_STRING_CAP] + f"… [+{len(value) - _EVENT_STRING_CAP} chars; pass event_id to get_run_detail for this event in full]"
     return value
 
 
@@ -3795,6 +3797,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
         if name == "get_run_detail":
             run_id = args["run_id"]
             limit = args.get("events_limit")
+            if args.get("event_id") and limit is None:
+                limit = 500
             if limit is not None and (type(limit) is not int or not 1 <= limit <= 500):
                 return _err(400, "events_limit must be an integer from 1 through 500")
             filters = {"after_ts": args.get("events_after_ts"), "after_id": args.get("events_after_id"),
@@ -3816,6 +3820,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                     run["events_error"] = {"status": er.status_code}
                 else:
                     events = er.json()
+                    if args.get("event_id"):
+                        one = [e for e in _event_without_image_bytes(events) if e.get("id") == args["event_id"]]
+                        run["events"] = one
+                        if not one:
+                            run["events_error"] = {"reason": "event_id not found in the searched window"}
+                        return _ok(run)
                     kept, cut = _bound_event_page(_event_without_image_bytes(events))
                     run["events"] = kept
                     if cut:

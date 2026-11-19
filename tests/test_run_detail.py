@@ -115,3 +115,12 @@ def test_event_page_is_byte_bounded_and_resumable(monkeypatch):
     assert "events_truncated" in run
     assert run["events_next_after_id"] == kept[-1]["id"]
     assert all(len(e["payload"]["text"]) < 2200 for e in kept)
+
+
+def test_one_event_can_be_fetched_in_full(monkeypatch):
+    events = [{"id": f"e{i}", "ts": f"2026-11-19T12:00:{i:02d}", "kind": "tool_result",
+               "payload": {"text": "z" * 20000}} for i in range(3)]
+    response, _ = _run_detail(monkeypatch, {"event_id": "e1"}, httpx.Response(200, json=events))
+    run = json.loads(response)
+    assert [e["id"] for e in run["events"]] == ["e1"]
+    assert len(run["events"][0]["payload"]["text"]) == 20000
