@@ -120,7 +120,11 @@ def test_the_flow_contract_separates_a_failed_task_from_a_failed_tool_call(decla
     the contract has to point at it by name.
     """
     core = (APP_DIR / declared["aw-agents-flow"]).read_text()
-    assert len(core.encode("utf-8")) <= 3000
+    assert len(core.encode("utf-8")) <= 3500
+    # Always-needed rules stay in the injected core, not the on-demand guide.
+    assert "qa_not_needed=true" in core and "rejects the call" in core
+    assert "do not call `mark_flow_done` while it is pending" in core
+    assert "Do not call `set_blocker`" in core
     assert 'load_skill(name="aw-agents-flow-edge-cases")' in core
     assert "When the terminal action itself FAILS to execute" not in core
     text = (APP_DIR / declared["aw-agents-flow-edge-cases"]).read_text()
