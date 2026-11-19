@@ -38,13 +38,22 @@ def test_report_qa_replay_keeps_verdicts_and_excludes_incomplete_usage():
         build_report(manifest, rows.__getitem__)
 
 
-def test_platform_url_resolves_when_config_omits_it(monkeypatch):
+def test_platform_url_uses_workspace_env_when_config_omits_it(monkeypatch):
     from scripts.report_qa_replay import platform_url
 
     monkeypatch.setenv("AW_AGENTS_PLATFORM_BASE", "https://ap.example/")
-    monkeypatch.delenv("AGENTS_PLATFORM_BASE", raising=False)
-    assert platform_url({"agents_platform_token": "t"})  # no KeyError
+    assert platform_url({"agents_platform_token": "t"}) == "https://ap.example"
     assert platform_url({"agents_platform_base": "https://explicit.example/"}) == "https://explicit.example"
+
+
+def test_platform_url_refuses_the_shared_public_default(monkeypatch):
+    from agents_platform_runners_app import platform_base
+    from scripts.report_qa_replay import platform_url
+
+    monkeypatch.delenv("AW_AGENTS_PLATFORM_BASE", raising=False)
+    monkeypatch.setattr(platform_base, "workspace_env", lambda name: "")
+    with pytest.raises(SystemExit, match="No platform URL"):
+        platform_url({"agents_platform_token": "t"})
 
 
 def test_documented_manifest_example_is_a_json_array_that_builds():

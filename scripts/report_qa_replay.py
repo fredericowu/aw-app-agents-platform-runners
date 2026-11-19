@@ -107,9 +107,16 @@ def build_report(manifest, fetch_run):
 
 
 def platform_url(config):
-    """Same resolution the app itself uses, so a config that omits
-    agents_platform_base (the usual case) still finds the platform."""
-    return platform_base.resolve(config).rstrip("/")
+    """Explicit destination only. platform_base.resolve would fall back to a
+    shared public host and send the bearer token there, so a standalone
+    replay must name its platform (config key or the workspace env var)."""
+    explicit = str((config or {}).get("agents_platform_base") or "").strip()
+    explicit = explicit or platform_base.workspace_env(platform_base.ENV_VAR_NAME).strip()
+    if not explicit:
+        raise SystemExit(
+            "No platform URL: set agents_platform_base in the config or "
+            f"{platform_base.ENV_VAR_NAME} in the environment.")
+    return explicit.rstrip("/")
 
 
 def main():

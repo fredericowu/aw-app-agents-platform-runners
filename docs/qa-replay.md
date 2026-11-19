@@ -58,3 +58,7 @@ is a 20% reduction in median combined input on each benchmark case.
 If a historical deployment or artifact is unavailable, document the missing
 evidence and any equivalent fixture used. A fixture with different setup
 supports a paired comparison against its own baseline.
+
+The report sends the config's bearer token and the listed run IDs to the
+platform URL. Run it with `agents_platform_base` in the config or
+`AW_AGENTS_PLATFORM_BASE` set; it exits instead of guessing a shared host.
