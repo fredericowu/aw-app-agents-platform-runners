@@ -119,6 +119,21 @@
         "description": "Generic QA-review contract for the \"QA\" Agents Platform agents \u2014 validates a finished task's delivery and decides the outcome (Kanban status if a card system is wired up, otherwise a plain verdict)."
       },
       {
+        "id": "aw-qa-deployment",
+        "path": "skills/aw-qa-deployment/SKILL.md",
+        "description": "Verify the exact released and deployed revision for a deployable delivery."
+      },
+      {
+        "id": "aw-qa-regression",
+        "path": "skills/aw-qa-regression/SKILL.md",
+        "description": "Validate regression tests and mutation-test fixes in an isolated worktree."
+      },
+      {
+        "id": "aw-qa-live-ui",
+        "path": "skills/aw-qa-live-ui/SKILL.md",
+        "description": "Exercise a delivered UI in a clean browser and record interactive screenshot evidence."
+      },
+      {
         "id": "aw-agent-ux-coder",
         "path": "skills/aw-agent-ux-coder/SKILL.md",
         "description": "Contract for the \"UX Coder\" Agents Platform agent \u2014 owns end-to-end delivery of a UX-Proto prototype, with a strong mandate for usability."

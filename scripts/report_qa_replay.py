@@ -43,11 +43,12 @@ def build_report(manifest, fetch_run):
         run_ids = [entry["run_id"], *entry.get("linked_run_ids", [])]
         rows = []
         for run_id in run_ids:
-            if not re.fullmatch(r"[0-9a-f]{32}", run_id):
+            if not re.fullmatch(r"[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", run_id):
                 raise ValueError(f"Invalid run ID: {run_id}")
-            if run_id in seen:
+            run_uuid = UUID(run_id)
+            if run_uuid in seen:
                 raise ValueError(f"Run counted twice: {run_id}")
-            seen.add(run_id)
+            seen.add(run_uuid)
             row = fetch_run(run_id)
             if row["id"] != run_id:
                 raise ValueError(f"Run response does not match {run_id}")
