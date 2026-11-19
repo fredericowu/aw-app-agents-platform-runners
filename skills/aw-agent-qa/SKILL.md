@@ -142,17 +142,20 @@ decisions, gotchas, and architecture notes specific to this codebase.
   If another run is active, inspect its ownership and verify that it
   accepted the rework. If it did not, arrange a named resumer on its
   terminal event and verify the callback registration before ending.
+  Reconcile once when that callback arrives. If the same obstacle remains,
+  report the existing receipt or specific technical failure to the caller.
 - **Inherited or out-of-scope finding:** link an existing finding, or route
   a scope decision to the Product Owner with evidence and record the run
-  ID. Keep actionable in-scope rework moving on the current card. For
+  ID. Use the linked finding for that intake when independent implementation
+  needs to continue on the current card. For
   example, missing CI coverage for delivered mobile changes can go to
   Coder even when an inherited VPN error belongs on a linked follow-up.
 - **Owner-only decision or access:** identify the owner and exact decision
   or access required, with evidence of the blocker. Call `ask_human` and
-  confirm it returned a pending question ID for the current run. Only
+  confirm it returned a question ID with `status="pending"` and
+  `delivered=true` for the current run. Only
   then use `set_qa_status(status="need_human")` with the findings, question
-  ID and expected answer. Successful creation with an unresolved question
-  is the evidence to record. Keep actionable independent work moving.
+  ID and expected answer. Keep actionable independent work moving.
   If the question could not be created, record the tool failure and route
   it to the caller or responsible agent.
 
