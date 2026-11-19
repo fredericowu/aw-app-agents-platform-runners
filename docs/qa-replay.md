@@ -15,17 +15,19 @@ python3 scripts/report_qa_replay.py --config /path/to/runners-app-config.json ma
 The manifest is a JSON array with one observation per QA review:
 
 ```json
-{
-  "case": "verified-deploy",
-  "variant": "baseline",
-  "revision": "fixture-release-v1",
-  "route": "post_deploy",
-  "review_type": "deploy",
-  "card_id": "00000000-0000-0000-0000-000000000001",
-  "run_id": "00000000000000000000000000000001",
-  "linked_run_ids": ["00000000000000000000000000000002"],
-  "verdict": "pass"
-}
+[
+  {
+    "case": "verified-deploy",
+    "variant": "baseline",
+    "revision": "fixture-release-v1",
+    "route": "post_deploy",
+    "review_type": "deploy",
+    "card_id": "00000000-0000-0000-0000-000000000001",
+    "run_id": "00000000000000000000000000000001",
+    "linked_run_ids": ["00000000000000000000000000000002"],
+    "verdict": "pass"
+  }
+]
 ```
 
 Use `card_bound` for direct reviews with a card and `cardless_a2a` with a
@@ -56,3 +58,7 @@ is a 20% reduction in median combined input on each benchmark case.
 If a historical deployment or artifact is unavailable, document the missing
 evidence and any equivalent fixture used. A fixture with different setup
 supports a paired comparison against its own baseline.
+
+The report sends the config's bearer token and the listed run IDs to the
+platform URL. Run it with `agents_platform_base` in the config or
+`AW_AGENTS_PLATFORM_BASE` set; it exits instead of guessing a shared host.

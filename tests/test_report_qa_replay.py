@@ -36,3 +36,31 @@ def test_report_qa_replay_keeps_verdicts_and_excludes_incomplete_usage():
     rows[manifest[0]["linked_run_ids"][0]]["kind"] = "workflow"
     with pytest.raises(ValueError, match="Workflow rollup"):
         build_report(manifest, rows.__getitem__)
+
+
+def test_platform_url_uses_workspace_env_when_config_omits_it(monkeypatch):
+    from scripts.report_qa_replay import platform_url
+
+    monkeypatch.setenv("AW_AGENTS_PLATFORM_BASE", "https://ap.example/")
+    assert platform_url({"agents_platform_token": "t"}) == "https://ap.example"
+    assert platform_url({"agents_platform_base": "https://explicit.example/"}) == "https://explicit.example"
+
+
+def test_platform_url_refuses_the_shared_public_default(monkeypatch):
+    from agents_platform_runners_app import platform_base
+    from scripts.report_qa_replay import platform_url
+
+    monkeypatch.delenv("AW_AGENTS_PLATFORM_BASE", raising=False)
+    monkeypatch.setattr(platform_base, "workspace_env", lambda name: "")
+    with pytest.raises(SystemExit, match="No platform URL"):
+        platform_url({"agents_platform_token": "t"})
+
+
+def test_documented_manifest_example_is_a_json_array_that_builds():
+    import json
+    import pathlib
+    import re
+
+    doc = pathlib.Path(__file__).resolve().parents[1].joinpath("docs/qa-replay.md").read_text()
+    example = json.loads(re.search(r"```json\n(.*?)```", doc, re.S).group(1))
+    assert isinstance(example, list) and example[0]["run_id"]

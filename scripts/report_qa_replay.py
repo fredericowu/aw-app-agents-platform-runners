@@ -10,12 +10,16 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
 from uuid import UUID
 
 import httpx
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from agents_platform_runners_app import platform_base  # noqa: E402
 
 
 def _card_id(value):
@@ -102,6 +106,19 @@ def build_report(manifest, fetch_run):
     return {"samples": samples, "slices": slices}
 
 
+def platform_url(config):
+    """Explicit destination only. platform_base.resolve would fall back to a
+    shared public host and send the bearer token there, so a standalone
+    replay must name its platform (config key or the workspace env var)."""
+    explicit = str((config or {}).get("agents_platform_base") or "").strip()
+    explicit = explicit or platform_base.workspace_env(platform_base.ENV_VAR_NAME).strip()
+    if not explicit:
+        raise SystemExit(
+            "No platform URL: set agents_platform_base in the config or "
+            f"{platform_base.ENV_VAR_NAME} in the environment.")
+    return explicit.rstrip("/")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path, help="Runners app config JSON")
@@ -110,7 +127,7 @@ def main():
     config = json.loads(args.config.read_text())
     manifest = json.loads(args.manifest.read_text())
     with httpx.Client(
-        base_url=config["agents_platform_base"].rstrip("/"),
+        base_url=platform_url(config),
         headers={"Authorization": f"Bearer {config['agents_platform_token']}"},
         timeout=30,
     ) as client:
