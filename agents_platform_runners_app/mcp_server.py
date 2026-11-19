@@ -2928,20 +2928,57 @@ def _own_workspace() -> str:
     return platform_base.workspace_env("AW_WORKSPACE") or "aw"
 
 
-def _deploy_qa_input(row: dict) -> str:
-    """The QA dispatch message for one ``kanban_check_deployed`` row.
-    ``no_deploy_needed`` (DeployComponent='none', C3) has no shipped version
-    to point QA at, so it gets its own text rather than the generic
-    'verified <component> reached <to_version> live' message reading as
-    nonsense with an empty component/version."""
+def _deploy_qa_input(row: dict, card: dict | None = None) -> str:
+    """Build a compact handoff from verified deployment data and authored card sections."""
+    card = card or {}
+    headings = {
+        "objective": "Objective",
+        "acceptance criteria": "Acceptance criteria",
+        "artifact under review": "Artifact under review (reported, verify against the deployment)",
+        "prior decisions": "Prior decisions",
+        "delivery evidence": "Delivery evidence (reported, verify independently)",
+        "review constraints": "Review constraints",
+    }
+    sections: dict[str, list[str]] = {}
+    current = ""
+    for line in (card.get("body_md") or "").splitlines():
+        heading = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+        if heading:
+            current = heading[1].strip().casefold()
+        elif current in headings:
+            sections.setdefault(current, []).append(line)
+
+    title = card.get("title") or row.get("title") or "Kanban card"
+    page_id = row.get("page_id", "")
+    card_ref = card.get("url") or page_id
+    parts = [f"## QA handoff — {title}", f"Card: {card_ref}"]
     if row.get("verdict") == "no_deploy_needed":
-        return ("kanban_check_deployed: this card is marked DeployComponent='none' — no "
-                "deployment is needed. Verify the card's actual deliverable (e.g. a data "
-                "migration, a doc change) against its scope; there is no shipped version "
-                "to check.")
-    return (f"Post-deployment QA — kanban_check_deployed verified {row.get('component')} "
-            f"reached {row.get('to_version')} live. Verify the shipped change against "
-            "the card.")
+        parts.append("Deployment: no deployment is needed. Verify the card's actual deliverable.")
+    else:
+        parts.append(
+            f"Deployment verified by kanban_check_deployed: {row.get('component')} "
+            f"reached {row.get('to_version')} live (environment: {row.get('env') or 'unspecified'})."
+        )
+        workspaces = [item["workspace"] for item in row.get("observations", [])
+                      if item.get("verdict") == "deployed" and item.get("workspace")]
+        if workspaces:
+            parts.append(f"Verified workspaces: {', '.join(workspaces)}.")
+
+    for key, label in headings.items():
+        value = "\n".join(sections.get(key, [])).strip()
+        if len(value) > 1600:
+            parts.append(f"### {label}\nRead this section on the Kanban card for the complete details.")
+        elif value:
+            parts.append(f"### {label}\n{value}")
+        elif key == "acceptance criteria":
+            parts.append("### Acceptance criteria\nRead the Kanban card for the approved checks.")
+
+    parts.append(
+        "Verify the exact artifact and each acceptance check independently. "
+        "Use the Kanban card for full scope, history, and any missing evidence. "
+        "Report the observed result for each check and flag any missing revision or evidence."
+    )
+    return "\n\n".join(parts)
 
 
 async def _deploy_followups(c: httpx.AsyncClient, board: "kanban_dispatch.BoardClient",
@@ -2962,7 +2999,11 @@ async def _deploy_followups(c: httpx.AsyncClient, board: "kanban_dispatch.BoardC
     for row in candidates:
         if not row.get("qa_dispatch_needed"):
             continue
-        body = {"input": {"input": _deploy_qa_input(row)},
+        try:
+            card = await asyncio.to_thread(board.card, row["page_id"], include_comments=False)
+        except kanban_dispatch.BoardUnavailable:
+            card = None
+        body = {"input": {"input": _deploy_qa_input(row, card)},
                 "target_slug": row.get("target_slug") or kanban_dispatch.DEFAULT_TARGET_SLUG,
                 "notion_task_id": row["page_id"],
                 # Only the verified-deployment gate requests a fresh QA cycle.

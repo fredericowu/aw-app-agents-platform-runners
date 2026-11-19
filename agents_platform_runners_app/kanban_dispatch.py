@@ -211,10 +211,11 @@ class BoardClient:
         cards = body.get("cards") if isinstance(body, dict) else body
         return cards if isinstance(cards, list) else []
 
-    def card(self, page_id: str, *, with_content: bool = True) -> dict:
+    def card(self, page_id: str, *, with_content: bool = True,
+             include_comments: bool | None = None) -> dict:
         query = urllib.parse.urlencode({
             "include_body": str(with_content).lower(),
-            "include_comments": str(with_content).lower()})
+            "include_comments": str(with_content if include_comments is None else include_comments).lower()})
         return self._request("GET", f"{NOTION_PREFIX}/kanban/cards/{page_id}?{query}",
                              timeout=CARD_TIMEOUT_S)
 

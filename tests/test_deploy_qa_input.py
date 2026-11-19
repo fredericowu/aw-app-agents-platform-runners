@@ -32,3 +32,31 @@ def test_no_deploy_needed_row_gets_its_own_message_not_the_generic_one():
     text = mcp_server._deploy_qa_input(row)
     assert "no deployment is needed" in text
     assert "reached" not in text  # the generic template's phrasing must not leak through
+
+
+def test_handoff_uses_authored_sections_without_copying_history():
+    row = {"page_id": "card", "verdict": "deployed", "component": "app:demo",
+           "to_version": "v1", "env": "prod",
+           "observations": [{"workspace": "main", "verdict": "deployed"}]}
+    card = {
+        "url": "https://notion.so/card",
+        "body_md": (
+            "## Objective\nRetire settings.\n"
+            "## Acceptance criteria\n- A1: Back restores the previous panel.\n"
+            "## Artifact under review\nPR #12, SHA abc123\n"
+            "## Delivery evidence\nCI run 7\n"
+            "## Prior decisions\n" + "x" * 1601 + "\n"
+            "## Unrelated history\nDo not copy this history."
+        ),
+        "comments_md": "Do not copy these comments.",
+    }
+
+    text = mcp_server._deploy_qa_input(row, card)
+
+    assert "https://notion.so/card" in text
+    assert "Verified workspaces: main" in text
+    assert "A1: Back restores the previous panel." in text
+    assert "PR #12, SHA abc123" in text
+    assert "Delivery evidence (reported, verify independently)" in text
+    assert "Read this section on the Kanban card" in text
+    assert "Do not copy" not in text

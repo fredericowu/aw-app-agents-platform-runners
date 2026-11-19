@@ -3,6 +3,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -68,12 +69,17 @@ def test_deploy_dispatch_uses_qas_preserving_verified_deployment_rerun(monkeypat
         return httpx.Response(200, json={"run_id": "r"})
     monkeypatch.setattr(m.deploy_reconcile, "mark_qa_dispatched", lambda *a: None)
     row = {"page_id": "card", "target_slug": "target", "qa_dispatch_needed": True}
+    board = Mock()
+    board.card.return_value = {"body_md": "## Acceptance criteria\n- A1: Verify the panel."}
+
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-            await m._deploy_followups(c, object(), {"moved": [row]})
+            await m._deploy_followups(c, board, {"moved": [row]})
     asyncio.run(run())
     assert seen[0][0] == "/api/agent-groups/qas/run"
     assert seen[0][1]["qa_rerun"] is True
+    assert "A1: Verify the panel." in seen[0][1]["input"]["input"]
+    board.card.assert_called_once_with("card", include_comments=False)
     assert row["qa_dispatch"]["run_id"] == "r"
 
 
@@ -92,9 +98,12 @@ def test_deploy_409_reads_existing_run_without_redispatch(monkeypatch):
         return httpx.Response(200, json={"id": run_id, "source_slug": "qa"})
     monkeypatch.setattr(m.deploy_reconcile, "mark_qa_dispatched", lambda *a: None)
     row = {"page_id": "card", "target_slug": "target", "qa_dispatch_needed": True}
+    board = Mock()
+    board.card.side_effect = m.kanban_dispatch.BoardUnavailable("board offline")
+
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-            await m._deploy_followups(c, object(), {"moved": [row]})
+            await m._deploy_followups(c, board, {"moved": [row]})
     asyncio.run(run())
     assert seen == [("POST", "/api/agent-groups/qas/run"), ("GET", f"/api/runs/{run_id}")]
     assert row["qa_dispatch"] == {"run_id": run_id, "existing": True}
