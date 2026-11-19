@@ -1054,3 +1054,6 @@ def test_oversized_evidence_never_corrupts_the_stamp_at_the_property_limit(monke
     stored = json.loads(board._cards["p1"]["DeployCheckResult"])  # still valid JSON
     assert stored["verdict"] == "deployed" and "qa_evidence" not in stored
     assert row["qa_evidence"] == big  # this pass still dispatches it
+    # loud, not silent: a card comment names the problem and the way out
+    assert any("NOT stored" in text and "run_agent_async(qa_evidence" in text
+               for pid, text in board.comments if pid == "p1")

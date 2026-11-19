@@ -637,6 +637,16 @@ def _stamp(board: "kanban_dispatch.BoardClient", page_id: str, stamp: dict) -> N
         log.warning("deploy_reconcile: qa_evidence for %s exceeds the %d-char property "
                     "limit; not stored", page_id, PROPERTY_LIMIT)
         stamp = {k: v for k, v in stamp.items() if k != "qa_evidence"}
+        try:
+            board.add_comment(
+                page_id,
+                f"QA evidence was NOT stored: the stamped qa_evidence makes DeployCheckResult "
+                f"exceed Notion's {PROPERTY_LIMIT}-character property limit, which would silently "
+                "corrupt it. QA will receive the legacy handoff text. Re-stamp a smaller "
+                "qa_evidence (fewer/shorter checks, refs and gaps) or send it directly with "
+                "run_agent_async(qa_evidence=...) after merge.")
+        except Exception:  # noqa: BLE001 - the loud path must not break the stamp write
+            log.warning("deploy_reconcile: could not comment the over-limit evidence on %s", page_id)
     board.set_property(page_id, "DeployCheckResult", json.dumps(stamp))
     board.set_property(page_id, "LastDeployCheckAt",
                        _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d"))
