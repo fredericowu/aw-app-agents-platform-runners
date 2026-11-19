@@ -46,7 +46,7 @@ def test_red_after_a_heal_failed_row_and_prints_counts(monkeypatch):
 
 def test_red_on_repeated_zero_token_resumes(monkeypatch):
     z = [{"session_id": "01a1f32a-aaaa", "failures": 4, "last_at": "x"}]
-    red = _client(monkeypatch, {"counts": {}, "zero_token_resume_failures": z}
+    red = _client(monkeypatch, {"counts": {}, "total": 0, "zero_token_resume_failures": z}
                   ).get("/session-heals/doctor").json()
     assert red["ok"] is False and "01a1f32a" in red["detail"]["problems"][0]
 
@@ -54,7 +54,7 @@ def test_red_on_repeated_zero_token_resumes(monkeypatch):
 
 def test_cli_mismatch_is_listed_but_not_red(monkeypatch):
     m = [{"session_id": "s", "agent_slug": "a", "session_cli": "codex", "agent_cli": "claude"}]
-    ok = _client(monkeypatch, {"counts": {"healed": 1}, "zero_token_resume_failures": [],
+    ok = _client(monkeypatch, {"counts": {"healed": 1}, "total": 1, "zero_token_resume_failures": [],
                                "cli_mismatched_sessions": m}).get("/session-heals/doctor").json()
     assert ok["ok"] is True and ok["detail"]["cli_mismatched_sessions"] == m
 
@@ -69,6 +69,25 @@ def test_manifest_declares_the_doctor_entry():
     assert {"label": "Dead-session self-heal", "route": "/session-heals/doctor"} in manifest["contributes"]["doctor"]
 
 
-def test_unretire_tool_is_declared():
-    src = (ROOT / "agents_platform_runners_app" / "mcp_server.py").read_text()
-    assert 'Tool(name="unretire_session"' in src and "/unretire" in src
+def test_wrong_schema_is_red_not_green(monkeypatch):
+    for body in ({"status": "ok"}, [{"counts": {}}], {"counts": {}, "total": "0"}):
+        r = _client(monkeypatch, body).get("/session-heals/doctor").json()
+        assert r["ok"] is False and "unexpected shape" in r["detail"]["problems"][0], body
+
+
+def test_unretire_tool_posts_to_ap_mt_and_returns_its_answer(monkeypatch):
+    import asyncio
+    from agents_platform_runners_app import mcp_server
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(200, json={"session_id": "s-1", "unretired": True})
+
+    monkeypatch.setattr(mcp_server, "_agents_base_transport", lambda: httpx.MockTransport(handler))
+    monkeypatch.setattr(mcp_server, "BASE", "http://ap.test")
+    out = asyncio.run(mcp_server._dispatch_tool("unretire_session", {"session_id": "s-1"}))
+    assert seen == [("POST", "/api/sessions/s-1/unretire")]
+    assert '"unretired": true' in out[0].text
+    bad = asyncio.run(mcp_server._dispatch_tool("unretire_session", {}))
+    assert seen == [("POST", "/api/sessions/s-1/unretire")] and "session_id is required" in bad[0].text

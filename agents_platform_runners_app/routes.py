@@ -689,12 +689,26 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
         except (httpx.HTTPError, ValueError) as exc:
             return {"ok": False, "detail": {"problems": [
                 f"could not read the self-heal summary from agents-platform: {exc}"]}}
-        counts = data.get("counts") or {}
+        # A 200 is not proof: a proxy/old AP-MT can answer with any JSON. Without the
+        # summary's required fields the check has seen NOTHING, which is not green.
+        if (not isinstance(data, dict) or not isinstance(data.get("counts"), dict)
+                or not isinstance(data.get("total"), int) or isinstance(data.get("total"), bool)
+                or not isinstance(data.get("zero_token_resume_failures", []), list)
+                or not isinstance(data.get("cli_mismatched_sessions", []), list)):
+            return {"ok": False, "detail": {"problems": [
+                "agents-platform answered /api/sessions/heals/summary with an unexpected "
+                "shape (need an object with counts, total, zero_token_resume_failures) — "
+                "is AP-MT older than the self-heal release?"],
+                "got": str(data)[:200]}}
+        counts = data["counts"]
         problems = []
         for outcome in ("heal_failed", "capped", "systemic"):
             if counts.get(outcome):
                 problems.append(f"{counts[outcome]} self-heal(s) ended {outcome} in the last 24h")
         zero = data.get("zero_token_resume_failures") or []
+        if any(not isinstance(z, dict) or not z.get("session_id") for z in zero):
+            return {"ok": False, "detail": {"problems": [
+                "zero_token_resume_failures entries are malformed (need session_id)"]}}
         if zero:
             problems.append(f"{len(zero)} session(s) with 3+ zero-token resume failures in 24h: "
                             + ", ".join(z["session_id"][:8] for z in zero[:5]))
