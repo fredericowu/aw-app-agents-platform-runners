@@ -310,3 +310,17 @@ def test_each_resync_uses_its_own_temp_file(tmp_path, monkeypatch):
     tmps = [u for u in used if u.endswith(".claude.json") is False and ".claude.json." in u]
     assert len(tmps) == 2 and len(set(tmps)) == 2, used
     assert sorted(p.name for p in ws.iterdir()) == [".claude", ".claude.json"]
+
+
+def test_nonstandard_json_master_falls_back_to_backup(tmp_path, monkeypatch):
+    """Python's json accepts NaN; Claude's JSON.parse does not."""
+    import json
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text('{"x": NaN}')
+    bdir = home / ".claude" / "backups"
+    bdir.mkdir()
+    (bdir / ".claude.json.backup.1").write_text('{"v": 1}')
+    _direct_env(tmp_path, monkeypatch, home)
+    _build("s9")
+    seed = home / ".claude" / "isolated" / "s9" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"v": 1}

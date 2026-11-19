@@ -2078,6 +2078,11 @@ _CLAUDE_JSON_READ_ATTEMPTS = 5
 _CLAUDE_JSON_READ_RETRY_S = 0.05
 
 
+def _reject_json_constant(name: str):
+    """JS ``JSON.parse`` rejects NaN/Infinity, which Python accepts."""
+    raise ValueError(f"non-standard JSON constant {name}")
+
+
 def _parse_claude_json(path: Path) -> bytes | None:
     """The file's bytes if they parse as a JSON object, else None."""
     try:
@@ -2087,7 +2092,7 @@ def _parse_claude_json(path: Path) -> bytes | None:
             if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
                 return None
             raw = fh.read()
-        return raw if isinstance(json.loads(raw), dict) else None
+        return raw if isinstance(json.loads(raw, parse_constant=_reject_json_constant), dict) else None
     except (OSError, ValueError, RecursionError):  # deeply nested JSON
         return None
 
