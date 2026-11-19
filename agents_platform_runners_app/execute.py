@@ -71,6 +71,7 @@ import random
 import re
 import shutil
 import stat
+import tempfile
 import threading
 import time
 import uuid
@@ -1560,11 +1561,18 @@ def _sync_home_creds_into_workspace(real_home: Path, spec: dict) -> None:
                     if raw is None:
                         log.warning("execute: %s does not parse — keeping cached copy", src)
                         continue
-                    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
-                    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                    with os.fdopen(fd, "wb") as fh:
-                        fh.write(raw)
-                    os.replace(tmp, dst)
+                    # Unique temp per sync: /execute runs one thread per run.
+                    fd, tmp = tempfile.mkstemp(dir=dst.parent, prefix=f".{dst.name}.")
+                    try:
+                        with os.fdopen(fd, "wb") as fh:
+                            fh.write(raw)
+                        os.replace(tmp, dst)
+                    except BaseException:
+                        try:
+                            os.unlink(tmp)
+                        except OSError:
+                            pass
+                        raise
                 else:
                     shutil.copy2(src, dst)
         except Exception:
@@ -2080,7 +2088,7 @@ def _parse_claude_json(path: Path) -> bytes | None:
                 return None
             raw = fh.read()
         return raw if isinstance(json.loads(raw), dict) else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):  # deeply nested JSON
         return None
 
 
@@ -2132,9 +2140,9 @@ def _write_claude_json_seed(real_home: Path, creds_file: str, host_dir: Path) ->
         log.error("execute: master %s unparseable — seeding from backup %s",
                   creds_file, source)
     dest = host_dir / CLAUDE_JSON_SEED_FILENAME
-    tmp = host_dir / f".{CLAUDE_JSON_SEED_FILENAME}.{os.getpid()}.tmp"
+    tmp = None
     try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd, tmp = tempfile.mkstemp(dir=host_dir, prefix=f".{CLAUDE_JSON_SEED_FILENAME}.")  # 0600
         with os.fdopen(fd, "wb") as fh:
             fh.write(raw)
         os.replace(tmp, dest)
@@ -2142,7 +2150,8 @@ def _write_claude_json_seed(real_home: Path, creds_file: str, host_dir: Path) ->
     except OSError:
         log.exception("execute: could not write %s seed", creds_file)
         try:
-            tmp.unlink()
+            if tmp:
+                os.unlink(tmp)
         except OSError:
             pass
         return False

@@ -273,3 +273,40 @@ def test_cold_wrapper_reports_a_failed_seed_copy(tmp_path, monkeypatch):
     _direct_env(tmp_path, monkeypatch, home)
     _img, argv, _kw, _mcp = _build("s7")
     assert "could not seed" in argv[2] and ">&2" in argv[2]
+
+
+def test_deeply_nested_master_falls_back_to_backup(tmp_path, monkeypatch):
+    import json
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text("[" * 100000 + "]" * 100000)
+    bdir = home / ".claude" / "backups"
+    bdir.mkdir()
+    (bdir / ".claude.json.backup.1").write_text('{"v": 1}')
+    _direct_env(tmp_path, monkeypatch, home)
+    _build("s8")
+    seed = home / ".claude" / "isolated" / "s8" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"v": 1}
+
+
+def test_each_resync_uses_its_own_temp_file(tmp_path, monkeypatch):
+    """/execute runs one thread per run: a PID-named temp shared by two
+    overlapping syncs interleaves their writes. Pin unique temp names."""
+    import json
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text(json.dumps({"k": 1}))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(ws))
+    used = []
+    real_replace = execute_mod.os.replace
+
+    def spy(src, dst):
+        used.append(str(src))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(execute_mod.os, "replace", spy)
+    _REAL_SYNC(home, execute_mod.CLI_SPECS["claude"])
+    _REAL_SYNC(home, execute_mod.CLI_SPECS["claude"])
+    tmps = [u for u in used if u.endswith(".claude.json") is False and ".claude.json." in u]
+    assert len(tmps) == 2 and len(set(tmps)) == 2, used
+    assert sorted(p.name for p in ws.iterdir()) == [".claude", ".claude.json"]
