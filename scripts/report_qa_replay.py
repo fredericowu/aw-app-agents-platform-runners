@@ -10,12 +10,16 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
 from uuid import UUID
 
 import httpx
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from agents_platform_runners_app import platform_base  # noqa: E402
 
 
 def _card_id(value):
@@ -102,6 +106,12 @@ def build_report(manifest, fetch_run):
     return {"samples": samples, "slices": slices}
 
 
+def platform_url(config):
+    """Same resolution the app itself uses, so a config that omits
+    agents_platform_base (the usual case) still finds the platform."""
+    return platform_base.resolve(config).rstrip("/")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path, help="Runners app config JSON")
@@ -110,7 +120,7 @@ def main():
     config = json.loads(args.config.read_text())
     manifest = json.loads(args.manifest.read_text())
     with httpx.Client(
-        base_url=config["agents_platform_base"].rstrip("/"),
+        base_url=platform_url(config),
         headers={"Authorization": f"Bearer {config['agents_platform_token']}"},
         timeout=30,
     ) as client:
