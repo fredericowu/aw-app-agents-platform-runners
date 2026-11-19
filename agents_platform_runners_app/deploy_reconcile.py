@@ -526,6 +526,7 @@ def _evaluate_card(board: "kanban_dispatch.BoardClient", summary: dict, *,
                   qa_dispatch_needed=(qa_status.strip().lower() != "done" and not qa_dispatched))
         row["_stamp"] = {"verdict": "no_deploy_needed", "unknown_streak": 0,
                          "invalid_commented": False, "qa_dispatched": qa_dispatched}
+        _carry_qa_evidence(prior, row)
         row["_qa_status"] = qa_status
         row["_streak"] = 0
         return row
@@ -600,9 +601,22 @@ def _evaluate_card(board: "kanban_dispatch.BoardClient", summary: dict, *,
               reminder_action=reminder_action)
     row["_stamp"] = {"verdict": verdict, "unknown_streak": streak,
                      "invalid_commented": False, "qa_dispatched": qa_dispatched}
+    _carry_qa_evidence(prior, row)
     row["_qa_status"] = qa_status
     row["_streak"] = streak
     return row
+
+
+def _carry_qa_evidence(prior: dict, row: dict) -> None:
+    """Hand a producer-supplied ``qa_evidence`` object (written onto this
+    card's own ``DeployCheckResult`` after merge verification) to the QA
+    dispatch, and keep it in the stamp ``_stamp`` rewrites whole. Absent or
+    non-object -> nothing is carried and QA gets the legacy text; evidence is
+    never synthesised from deploy metadata."""
+    evidence = prior.get("qa_evidence")
+    if isinstance(evidence, dict):
+        row["qa_evidence"] = evidence
+        row["_stamp"]["qa_evidence"] = evidence
 
 
 def _stamp(board: "kanban_dispatch.BoardClient", page_id: str, stamp: dict) -> None:

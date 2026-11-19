@@ -165,3 +165,27 @@ def test_deploy_followup_uses_renderer_and_retains_rerun(monkeypatch, evidence, 
     assert outbound[0][0] == "/api/agent-groups/qas/run"
     assert outbound[0][1]["qa_rerun"] is True
     assert outbound[0][1]["input"]["input"] == asyncio.run(qa_evidence.render_qa_evidence(evidence))
+
+
+def test_reconciled_deploy_card_dispatches_stamped_evidence(monkeypatch, outbound):
+    """Producer -> reconcile row -> QA dispatch, no hand-built row."""
+    from agents_platform_runners_app import deploy_reconcile as dr
+    from tests.test_deploy_reconcile import FakeBoard, _card, _patch_observe
+
+    evidence = {
+        "version": 1, "revision": {"artifact_revision": "release-v1"},
+        "scope": {"summary": "Verify"}, "evidence_refs": [], "known_gaps": [],
+        "checks": [{"id": "1", "text": "Smoke", "result": "unchecked"}],
+    }
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+    board = FakeBoard({"p1": _card(DeployCheckResult=json.dumps({"qa_evidence": evidence}))})
+    result = dr.check_deployed(board, max_cards=10)
+
+    async def run():
+        async with httpx.AsyncClient() as client:
+            await mcp_server._deploy_followups(client, board, result)
+
+    asyncio.run(run())
+    sent = outbound[0][1]["input"]["input"]
+    assert sent.startswith("QA handoff v1") and json.loads(sent.split("\n", 1)[1]) == evidence
+    assert outbound[0][1]["qa_rerun"] is True
