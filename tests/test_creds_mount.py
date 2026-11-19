@@ -60,8 +60,9 @@ def test_direct_home_mount_is_rw_and_uncopied(tmp_path, monkeypatch):
     assert claude_src in vols, vols
     assert vols[claude_src] == {"bind": "/home/ubuntu/.claude", "mode": "rw"}
 
-    # .claude.json also rw from the live host path.
-    assert vols[f"{home_host}/.claude.json"] == {"bind": "/home/ubuntu/.claude.json", "mode": "rw"}
+    # ~/.claude.json is NOT bind-mounted (shared single-file inode corrupts
+    # under concurrent CLIs); a per-run seed is used instead.
+    assert not any(v["bind"] == "/home/ubuntu/.claude.json" for v in vols.values()), vols
 
     # No read-only .credentials.json shadow anywhere — that's what blocked
     # refresh persistence.
@@ -121,3 +122,57 @@ def test_fallback_copies_and_shadows_credentials_ro(tmp_path, monkeypatch):
     # .credentials.json mounted read-only in the fallback (blank-write guard).
     cred_src = f"/host/aw-workspace/.claude/.credentials.json"
     assert vols[cred_src] == {"bind": "/home/ubuntu/.claude/.credentials.json", "mode": "ro"}
+
+
+def _direct_env(tmp_path, monkeypatch, home):
+    monkeypatch.setattr(execute_mod, "REAL_HOME", str(home))
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "/host/aw-workspace-home")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOST_DIR", "/host/aw-workspace")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(tmp_path / "ws"))
+    monkeypatch.setattr(execute_mod, "_CLAUDE_JSON_READ_RETRY_S", 0)
+
+
+def _build(job_id):
+    return execute_mod._build_container_kwargs({"run_id": job_id, "cli": "claude", "prompt": "hi"})
+
+
+def test_seed_written_parseable_and_wired(tmp_path, monkeypatch):
+    import json, os, stat
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text('{"oauthAccount": {"a": 1}, "userID": "u1"}')
+    _direct_env(tmp_path, monkeypatch, home)
+    _img, argv, kw, _mcp = _build("s1")
+    seed = home / ".claude" / "isolated" / "s1" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"oauthAccount": {"a": 1}, "userID": "u1"}
+    assert stat.S_IMODE(os.stat(seed).st_mode) == 0o600
+    assert kw["environment"]["AW_CLAUDE_JSON_SEED"] == "/home/ubuntu/.claude/isolated/s1/claude.json.seed"
+    # cold wrapper: copy-if-absent then exec so stdin (the prompt) passes through
+    assert argv[:2] == ["sh", "-c"] and 'exec "$@"' in argv[2]
+    assert "aw-cli-with-quota" in argv
+
+
+def test_corrupt_master_falls_back_to_newest_valid_backup(tmp_path, monkeypatch):
+    import json, os
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text('{"oauthAccount": {"a": 1}')  # truncated
+    bdir = home / ".claude" / "backups"
+    bdir.mkdir()
+    old = bdir / ".claude.json.backup.1"; old.write_text('{"v": "old"}')
+    new = bdir / ".claude.json.backup.2"; new.write_text('{"v": "new"}')
+    bad = bdir / ".claude.json.backup.3"; bad.write_text('{"v":')  # newest but corrupt
+    os.utime(old, (1000, 1000)); os.utime(new, (2000, 2000)); os.utime(bad, (3000, 3000))
+    _direct_env(tmp_path, monkeypatch, home)
+    _build("s2")
+    seed = home / ".claude" / "isolated" / "s2" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"v": "new"}
+
+
+def test_no_valid_source_spawns_without_seed(tmp_path, monkeypatch):
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text("{not json")
+    _direct_env(tmp_path, monkeypatch, home)
+    _img, argv, kw, _mcp = _build("s3")
+    assert not (home / ".claude" / "isolated" / "s3" / "claude.json.seed").exists()
+    assert "AW_CLAUDE_JSON_SEED" not in kw["environment"]
+    assert argv[0] == "aw-cli-with-quota"  # no copy wrapper
+    assert not any(v["bind"] == "/home/ubuntu/.claude.json" for v in kw["volumes"].values())

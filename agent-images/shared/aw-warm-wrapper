@@ -62,6 +62,13 @@ exec 5<"$FIFO_IN"
 # process closes — confirmed empirically: fixing only the main process's fd
 # 3 above still left claude alive 60s+ after drain (its own leftover
 # inherited fd 3 kept the pipe "written-to" from its own end).
+# Seed the container's own ~/.claude.json (private inode, rename-able) from the
+# runner's validated per-run copy — only if absent. ~/.claude.json is NOT
+# bind-mounted: a shared single-file mount made concurrent CLIs corrupt it.
+if [ -n "${AW_CLAUDE_JSON_SEED:-}" ] && [ ! -e "$HOME/.claude.json" ] && [ -f "$AW_CLAUDE_JSON_SEED" ]; then
+    cp "$AW_CLAUDE_JSON_SEED" "$HOME/.claude.json" 2>/dev/null || true
+fi
+
 "$@" <&5 >"$FIFO_OUT" 2>"$RUNDIR/claude_err.log" 3<&- &
 CLAUDE_PID=$!
 echo "$CLAUDE_PID" > "$RUNDIR/claude.pid"

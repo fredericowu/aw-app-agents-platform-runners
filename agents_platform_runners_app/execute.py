@@ -2046,6 +2046,82 @@ MAX_ARG_STRLEN = 32 * 4096
 APPEND_SYSTEM_PROMPT_FILENAME = "append-system-prompt.md"
 
 
+#: Container-side env var naming the per-run ``.claude.json`` seed. Read by the
+#: cold-path ``sh -c`` wrapper and by ``aw-warm-wrapper``.
+CLAUDE_JSON_SEED_ENV = "AW_CLAUDE_JSON_SEED"
+CLAUDE_JSON_SEED_FILENAME = "claude.json.seed"
+_CLAUDE_JSON_READ_ATTEMPTS = 5
+_CLAUDE_JSON_READ_RETRY_S = 0.05
+
+
+def _parse_claude_json(path: Path) -> bytes | None:
+    """The file's bytes if they parse as a JSON object, else None."""
+    try:
+        raw = path.read_bytes()
+        return raw if isinstance(json.loads(raw), dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _pick_claude_json_seed(real_home: Path, creds_file: str) -> tuple[bytes | None, str]:
+    """(bytes, source label) for the per-run seed, or (None, "").
+
+    ``$HOME/.claude.json`` is written in place by every live CLI (it is a
+    single inode shared with the workspace's own CLI), so a read can catch a
+    torn write: retry a few times. If it never parses, fall back to the newest
+    ``~/.claude/backups/.claude.json.backup.*`` that does.
+    """
+    master = real_home / creds_file
+    for attempt in range(_CLAUDE_JSON_READ_ATTEMPTS):
+        raw = _parse_claude_json(master)
+        if raw is not None:
+            return raw, str(master)
+        if attempt + 1 < _CLAUDE_JSON_READ_ATTEMPTS:
+            time.sleep(_CLAUDE_JSON_READ_RETRY_S)
+    backups = real_home / ".claude" / "backups"
+    try:
+        candidates = sorted(backups.glob(f"{creds_file}.backup.*"),
+                            key=lambda q: q.stat().st_mtime, reverse=True)
+    except OSError:
+        candidates = []
+    for cand in candidates:
+        raw = _parse_claude_json(cand)
+        if raw is not None:
+            return raw, str(cand)
+    return None, ""
+
+
+def _write_claude_json_seed(real_home: Path, creds_file: str, host_dir: Path) -> bool:
+    """Write a validated copy of ``.claude.json`` into this run's isolated dir.
+
+    Returns True when a seed was written. tmp+rename, 0600. Never raises: with
+    no valid source the run still spawns (the CLI creates its own file).
+    """
+    raw, source = _pick_claude_json_seed(real_home, creds_file)
+    if raw is None:
+        log.error("execute: NO valid %s (master unparseable, no valid backup) — "
+                  "spawning WITHOUT a config seed", creds_file)
+        return False
+    if source != str(real_home / creds_file):
+        log.error("execute: master %s unparseable — seeding from backup %s",
+                  creds_file, source)
+    dest = host_dir / CLAUDE_JSON_SEED_FILENAME
+    tmp = host_dir / f".{CLAUDE_JSON_SEED_FILENAME}.{os.getpid()}.tmp"
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(raw)
+        os.replace(tmp, dest)
+        return True
+    except OSError:
+        log.exception("execute: could not write %s seed", creds_file)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
 def _direct_home_mount(spec: dict) -> bool:
     """Whether this CLI's creds reach the container as a live $HOME mount.
 
@@ -2376,8 +2452,9 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
         # parallel.)
         _home = WORKSPACE_HOME_HOST_DIR.rstrip("/")
         _mount_abs(f"{_home}/{creds_dir}", f"/home/ubuntu/{creds_dir}", ro=False)
-        if creds_file and (_real_home / creds_file).is_file():
-            _mount_abs(f"{_home}/{creds_file}", f"/home/ubuntu/{creds_file}", ro=False)
+        # NOT mounting ~/.claude.json: a single-file bind shares one inode with
+        # every container, rename onto it is EBUSY, so CLIs write in place and
+        # concurrent readers see torn JSON. A per-run seed is used instead.
         # Isolated cwd already lives inside the whole-.claude mount above — no
         # separate mount (matches docker_agent.py).
         if cli == "codex":
@@ -2423,10 +2500,16 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
                     mcp_servers=mcp_servers)
                 _mount(f"{isolated_rel}/codex-config.toml",
                        f"/home/ubuntu/{creds_dir}/config.toml", ro=True)
-        if creds_file and (Path(WORKSPACE_CONTAINER_DIR) / creds_file).is_file():
-            _mount(creds_file, f"/home/ubuntu/{creds_file}", ro=True)
         # Isolated run cwd (rw — the CLI writes its own session/project state here)
         _mount(isolated_rel, isolated_container_path, ro=False)
+
+    # Private per-run copy of ~/.claude.json (see _write_claude_json_seed). It
+    # lives in the isolated run dir, already visible in the container in every
+    # branch above, so it needs no mount of its own.
+    claude_seed_container_path = None
+    if creds_file and not creds_staged and _write_claude_json_seed(
+            _real_home, creds_file, isolated_host_dir):
+        claude_seed_container_path = f"{isolated_container_path}/{CLAUDE_JSON_SEED_FILENAME}"
 
     # Agent Config's "GitHub / Git" permission (agents-platform-multitenant's
     # executor.py forwards permissions.get("github") through RunnerLLM's
@@ -2681,6 +2764,14 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
         _oat = _claude_oauth_token()
         if _oat:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = _oat
+    if claude_seed_container_path:
+        # Copy onto the container's OWN writable layer before the CLI starts,
+        # only if absent. Warm: aw-warm-wrapper does it from this env var.
+        # Cold: wrap argv; `exec "$@"` keeps stdin (the prompt) flowing.
+        env[CLAUDE_JSON_SEED_ENV] = claude_seed_container_path
+        argv = ["sh", "-c",
+                f'[ -e "$HOME/{creds_file}" ] || cp "${CLAUDE_JSON_SEED_ENV}" "$HOME/{creds_file}" 2>/dev/null; exec "$@"',
+                "sh", *argv]
     # Codex has no --mcp-config flag (mcp_config_flag: None) to regenerate a
     # fresh caller-identity header every turn the way claude does — its MCP
     # connection is configured once, statically, in config.toml. The VALUE
