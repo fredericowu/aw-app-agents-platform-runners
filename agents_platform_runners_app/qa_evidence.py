@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from urllib.parse import urlsplit
 
+import httpx
 from jsonschema import Draft202012Validator
 
 
@@ -62,11 +64,13 @@ def _safe_reference(value):
         return False
 
 
-async def _verify_merged_revision(revision):
-    """Use the workspace GitHub CLI identity for public and private repos."""
+async def lookup_pr(repo, pr):
+    """Read a PR's state and merge commit with the workspace's authenticated
+    ``gh``. Runs only where that client exists (the workspace core process
+    serving the app's routes), never in the MCP gateway container."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "gh", "pr", "view", str(revision["pr"]), "--repo", revision["repo"],
+            "gh", "pr", "view", str(pr), "--repo", repo,
             "--json", "state,mergeCommit",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         )
@@ -78,10 +82,36 @@ async def _verify_merged_revision(revision):
             raise
         if proc.returncode != 0:
             raise ValueError("GitHub did not return the requested PR")
-        pr = json.loads(stdout)
+        data = json.loads(stdout)
     except (OSError, TimeoutError, ValueError) as exc:
+        raise ValueError("Could not read the PR from GitHub") from exc
+    return {"state": data.get("state"), "merge_sha": (data.get("mergeCommit") or {}).get("oid")}
+
+
+LOOKUP_ROUTE = "/api/apps/agents-platform-runners/qa-evidence/pr"
+
+
+async def _verify_merged_revision(revision):
+    """Ask the workspace API (where ``gh`` is authenticated) for the PR; the
+    MCP gateway's stdio child has no GitHub client of its own."""
+    from . import kanban_dispatch
+
+    key = os.environ.get(kanban_dispatch.API_KEY_VAR) or kanban_dispatch._from_env_file(kanban_dispatch.API_KEY_VAR)
+    if not key:
+        raise ValueError("Could not verify the PR's merged revision: workspace API key is not set")
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            r = await client.post(
+                f"{kanban_dispatch.board_base_url()}{LOOKUP_ROUTE}",
+                json={"repo": revision["repo"], "pr": revision["pr"]},
+                headers={"X-Api-Key": key},
+            )
+        if r.status_code != 200:
+            raise ValueError("lookup refused")
+        pr = r.json()
+    except (httpx.HTTPError, ValueError) as exc:
         raise ValueError("Could not verify the PR's merged revision") from exc
-    if pr.get("state") != "MERGED" or (pr.get("mergeCommit") or {}).get("oid") != revision["merged_sha"]:
+    if pr.get("state") != "MERGED" or pr.get("merge_sha") != revision["merged_sha"]:
         raise ValueError("The PR must be merged at the supplied SHA before QA dispatch")
 
 

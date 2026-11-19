@@ -7,6 +7,9 @@ import pytest
 from agents_platform_runners_app import mcp_server, qa_evidence
 
 
+LOOKUP = {}
+
+
 @pytest.fixture
 def evidence():
     return {
@@ -24,6 +27,8 @@ def outbound(monkeypatch):
     calls = []
 
     def handler(request):
+        if request.url.path == qa_evidence.LOOKUP_ROUTE:
+            return LOOKUP["handler"](request)
         calls.append((request.url.path, json.loads(request.content)))
         return httpx.Response(200, json={"run_id": "test-run"})
 
@@ -77,22 +82,63 @@ def test_invalid_evidence_is_rejected_before_dispatch(evidence, outbound):
     assert outbound == []
 
 
+def _workspace_api(monkeypatch, handler):
+    """Route the evidence verifier's workspace-API call to `handler`; the
+    gateway child has no `gh`, so a subprocess here is a regression."""
+    async def no_gh(*args, **kwargs):
+        raise FileNotFoundError("gh")
+
+    monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", no_gh)
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
+    LOOKUP["handler"] = handler
+
+
 def test_pre_merge_evidence_fails_closed(monkeypatch, evidence, outbound):
-    class PendingPR:
-        returncode = 0
-
-        async def communicate(self):
-            return b'{"state":"OPEN","mergeCommit":null}', None
-
-    async def github(*args, **kwargs):
-        assert args[:3] == ("gh", "pr", "view")
-        return PendingPR()
-
-    monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", github)
+    _workspace_api(monkeypatch, lambda r: httpx.Response(200, json={"state": "OPEN", "merge_sha": None}))
     result = _dispatch(slug="qa", qa_evidence=evidence)
     assert result["status"] == 400
     assert "must be merged" in result["message"]
     assert outbound == []
+
+
+def test_code_dispatch_succeeds_without_gh_in_gateway(monkeypatch, evidence, outbound):
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers["x-api-key"], json.loads(request.content)))
+        return httpx.Response(200, json={"state": "MERGED", "merge_sha": "a" * 40})
+
+    _workspace_api(monkeypatch, handler)
+    assert _dispatch(slug="qa", qa_evidence=evidence)["run_id"]
+    assert seen == [(qa_evidence.LOOKUP_ROUTE, "k", {"repo": "owner/repo", "pr": 7})]
+    assert outbound[0][0] == "/api/agents/qa/run"
+
+
+def test_lookup_failure_fails_closed(monkeypatch, evidence, outbound):
+    _workspace_api(monkeypatch, lambda r: httpx.Response(502, json={"detail": "x"}))
+    assert _dispatch(slug="qa", qa_evidence=evidence)["status"] == 400
+    assert outbound == []
+
+
+def test_route_runs_gh_where_it_exists(monkeypatch):
+    from fastapi.testclient import TestClient
+    from agents_platform_runners_app.routes import build_routes
+
+    class Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"state":"MERGED","mergeCommit":{"oid":"' + b"b" * 40 + b'"}}', None
+
+    async def gh(*args, **kwargs):
+        assert args[:3] == ("gh", "pr", "view") and "owner/repo" in args
+        return Proc()
+
+    monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", gh)
+    client = TestClient(build_routes())
+    r = client.post("/qa-evidence/pr", json={"repo": "owner/repo", "pr": 7})
+    assert r.json() == {"state": "MERGED", "merge_sha": "b" * 40}
+    assert client.post("/qa-evidence/pr", json={"repo": "o/r", "pr": "7"}).status_code == 400
 
 
 def test_legacy_text_still_dispatches(outbound):
