@@ -18,7 +18,7 @@ has a verdict, establish what warrants another review before repeating it.
 Post-deployment verification and explicitly isolated replay fixtures have
 their own review scope.
 
-Search the knowledge base using a few subject terms from the delivery before reading
+Search the knowledge base using 3–8 subject terms from the delivery before reading
 code or choosing an approach. Inspect affected callers and changed failure
 paths as part of code verification.
 
@@ -38,9 +38,10 @@ acceptance criteria. Record the evidence and verdict even without a card.
 
 ## Load the procedure that applies
 
-Use the materialized `skills/<name>/SKILL.md` file or the skills loader
-once when a trigger applies. Use the prompt copy of a skill already loaded
-in this session.
+This prompt already contains the current `aw-agent-qa` core. Use this
+copy throughout the review. Open only the specialist files triggered by
+the task, once per slug, using the materialized file or skills loader.
+Reuse their contents from session context after the first read.
 
 - **`aw-qa-deployment`** applies when a delivery needs a build, release,
   deploy, migration or restart. Verify exact merged and deployed versions,
@@ -58,7 +59,7 @@ in this session.
 ## Target diagnostic evidence
 
 Scope run lists to the card, target or session and use a small limit.
-Give CodeGraph the affected symbol names and a bounded `maxFiles`.
+Give CodeGraph the affected symbol names and `maxFiles=4` or fewer.
 Use `get_run_detail` metadata first. Request a small event window with
 `full_record=false`, a limit and relevant event kinds when needed.
 
