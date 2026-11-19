@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,13 +70,16 @@ def test_manifest_declares_the_doctor_entry():
     assert {"label": "Dead-session self-heal", "route": "/session-heals/doctor"} in manifest["contributes"]["doctor"]
 
 
-def test_wrong_schema_is_red_not_green(monkeypatch):
-    p1_only = {"counts": {"healed": 1}, "total": 1, "window_hours": 24, "degraded": False, "recent": []}
-    for body in ({"status": "ok"}, [{"counts": {}}], {"counts": {}, "total": "0"}, p1_only):
-        r = _client(monkeypatch, body).get("/session-heals/doctor").json()
-        assert r["ok"] is False and "unexpected shape" in r["detail"]["problems"][0], body
-        if body is p1_only:
-            assert "predates the self-heal P3 summary" in r["detail"]["problems"][0]
+_P1_ONLY = {"counts": {"healed": 1}, "total": 1, "window_hours": 24, "degraded": False, "recent": []}
+
+
+@pytest.mark.parametrize("body", [{"status": "ok"}, [{"counts": {}}], {"counts": {}, "total": "0"}, _P1_ONLY],
+                         ids=["status-ok", "list", "total-str", "p1-only-no-zero-token-field"])
+def test_wrong_schema_is_red_not_green(monkeypatch, body):
+    r = _client(monkeypatch, body).get("/session-heals/doctor").json()
+    assert r["ok"] is False and "unexpected shape" in r["detail"]["problems"][0]
+    if body is _P1_ONLY:
+        assert "predates the self-heal P3 summary" in r["detail"]["problems"][0]
 
 
 def test_unretire_tool_posts_to_ap_mt_and_returns_its_answer(monkeypatch):
