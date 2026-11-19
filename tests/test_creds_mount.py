@@ -176,3 +176,40 @@ def test_no_valid_source_spawns_without_seed(tmp_path, monkeypatch):
     assert "AW_CLAUDE_JSON_SEED" not in kw["environment"]
     assert argv[0] == "aw-cli-with-quota"  # no copy wrapper
     assert not any(v["bind"] == "/home/ubuntu/.claude.json" for v in kw["volumes"].values())
+
+
+def test_dangling_backup_does_not_discard_valid_ones(tmp_path, monkeypatch):
+    import json, os
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text("{")
+    bdir = home / ".claude" / "backups"
+    bdir.mkdir()
+    (bdir / ".claude.json.backup.1").symlink_to(tmp_path / "gone")  # stat fails
+    ok = bdir / ".claude.json.backup.2"; ok.write_text('{"v": "ok"}')
+    _direct_env(tmp_path, monkeypatch, home)
+    _build("s4")
+    seed = home / ".claude" / "isolated" / "s4" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"v": "ok"}
+
+
+def test_fallback_uses_workspace_copy_when_real_home_config_missing(tmp_path, monkeypatch):
+    import json
+    home = _make_home(tmp_path)
+    (home / ".claude.json").unlink()  # real-home config gone ...
+    ws = tmp_path / "ws"
+    monkeypatch.setattr(execute_mod, "REAL_HOME", str(home))
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "")  # fallback branch
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOST_DIR", "/host/aw-workspace")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(ws))
+    monkeypatch.setattr(execute_mod, "_CLAUDE_JSON_READ_RETRY_S", 0)
+
+    def fake_resync(real_home, spec):  # ... but the cached workspace copy survives
+        (ws / ".claude").mkdir(parents=True, exist_ok=True)
+        (ws / ".claude" / ".credentials.json").write_text("{}")
+        (ws / ".claude.json").write_text('{"cached": true}')
+
+    monkeypatch.setattr(execute_mod, "_sync_home_creds_into_workspace", fake_resync)
+    _img, _argv, kw, _mcp = _build("s5")
+    seed = ws / ".claude" / "isolated" / "s5" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"cached": True}
+    assert not any(v["bind"] == "/home/ubuntu/.claude.json" for v in kw["volumes"].values())

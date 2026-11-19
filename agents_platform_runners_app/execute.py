@@ -2079,11 +2079,16 @@ def _pick_claude_json_seed(real_home: Path, creds_file: str) -> tuple[bytes | No
         if attempt + 1 < _CLAUDE_JSON_READ_ATTEMPTS:
             time.sleep(_CLAUDE_JSON_READ_RETRY_S)
     backups = real_home / ".claude" / "backups"
+    stamped: list[tuple[float, Path]] = []
     try:
-        candidates = sorted(backups.glob(f"{creds_file}.backup.*"),
-                            key=lambda q: q.stat().st_mtime, reverse=True)
+        for cand in backups.glob(f"{creds_file}.backup.*"):
+            try:  # one dangling/vanished backup must not discard the rest
+                stamped.append((cand.stat().st_mtime, cand))
+            except OSError:
+                continue
     except OSError:
-        candidates = []
+        pass
+    candidates = [c for _, c in sorted(stamped, key=lambda t: t[0], reverse=True)]
     for cand in candidates:
         raw = _parse_claude_json(cand)
         if raw is not None:
@@ -2507,9 +2512,16 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     # lives in the isolated run dir, already visible in the container in every
     # branch above, so it needs no mount of its own.
     claude_seed_container_path = None
-    if creds_file and not creds_staged and _write_claude_json_seed(
-            _real_home, creds_file, isolated_host_dir):
-        claude_seed_container_path = f"{isolated_container_path}/{CLAUDE_JSON_SEED_FILENAME}"
+    if creds_file and not creds_staged:
+        # Fallback branch (no live $HOME mount): the workspace-tree copy that
+        # _sync_home_creds_into_workspace keeps is the last cached config when
+        # the real-home one is missing, so try it too (it used to be mounted).
+        _seed_homes = [_real_home]
+        if not direct_home_mount:
+            _seed_homes.append(Path(WORKSPACE_CONTAINER_DIR))
+        if any(_write_claude_json_seed(h, creds_file, isolated_host_dir)
+               for h in _seed_homes):
+            claude_seed_container_path = f"{isolated_container_path}/{CLAUDE_JSON_SEED_FILENAME}"
 
     # Agent Config's "GitHub / Git" permission (agents-platform-multitenant's
     # executor.py forwards permissions.get("github") through RunnerLLM's
