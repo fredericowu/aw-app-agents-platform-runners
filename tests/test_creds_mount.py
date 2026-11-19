@@ -26,6 +26,9 @@ sys.path.insert(0, str(ROOT))
 
 from agents_platform_runners_app import execute as execute_mod  # noqa: E402
 
+# conftest's autouse fixture stubs the module attribute; keep the real one.
+_REAL_SYNC = execute_mod._sync_home_creds_into_workspace
+
 
 def _make_home(tmp_path: Path) -> Path:
     """A fake $HOME with a populated .claude creds dir + .claude.json."""
@@ -213,3 +216,32 @@ def test_fallback_uses_workspace_copy_when_real_home_config_missing(tmp_path, mo
     seed = ws / ".claude" / "isolated" / "s5" / "claude.json.seed"
     assert json.loads(seed.read_text()) == {"cached": True}
     assert not any(v["bind"] == "/home/ubuntu/.claude.json" for v in kw["volumes"].values())
+
+
+def test_resync_keeps_valid_cache_when_home_config_is_truncated(tmp_path, monkeypatch):
+    import json
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text('{"half":')
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / ".claude.json").write_text('{"cached": true}')
+    monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(ws))
+    _REAL_SYNC(home, execute_mod.CLI_SPECS["claude"])
+    assert json.loads((ws / ".claude.json").read_text()) == {"cached": True}
+    (home / ".claude.json").write_text('{"fresh": 1}')
+    _REAL_SYNC(home, execute_mod.CLI_SPECS["claude"])
+    assert json.loads((ws / ".claude.json").read_text()) == {"fresh": 1}
+
+
+def test_fifo_master_does_not_hang_and_falls_back(tmp_path, monkeypatch):
+    import json, os
+    home = _make_home(tmp_path)
+    (home / ".claude.json").unlink()
+    os.mkfifo(home / ".claude.json")  # no writer: read_bytes() would block forever
+    bdir = home / ".claude" / "backups"
+    bdir.mkdir()
+    (bdir / ".claude.json.backup.1").write_text('{"v": 1}')
+    _direct_env(tmp_path, monkeypatch, home)
+    _build("s6")
+    seed = home / ".claude" / "isolated" / "s6" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"v": 1}

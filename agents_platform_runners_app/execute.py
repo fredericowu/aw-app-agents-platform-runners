@@ -1549,6 +1549,13 @@ def _sync_home_creds_into_workspace(real_home: Path, spec: dict) -> None:
             if src.is_dir():
                 shutil.copytree(src, dst, dirs_exist_ok=True, ignore=_creds_copy_ignore)
             elif src.is_file():
+                # .claude.json is rewritten in place by live CLIs: never let a
+                # torn/truncated copy replace the last valid cached one (the
+                # per-run seed falls back to this cache).
+                if rel == spec.get("creds_file") and rel.endswith(".json") \
+                        and _parse_claude_json(src) is None:
+                    log.warning("execute: %s does not parse — keeping cached copy", src)
+                    continue
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
         except Exception:
@@ -2057,7 +2064,12 @@ _CLAUDE_JSON_READ_RETRY_S = 0.05
 def _parse_claude_json(path: Path) -> bytes | None:
     """The file's bytes if they parse as a JSON object, else None."""
     try:
-        raw = path.read_bytes()
+        # O_NONBLOCK + S_ISREG: a FIFO with no writer must not hang the spawn.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return None
+            raw = fh.read()
         return raw if isinstance(json.loads(raw), dict) else None
     except (OSError, ValueError):
         return None
