@@ -668,6 +668,42 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
     def _ap_unreachable(what: str, exc: Exception) -> HTTPException:
         return HTTPException(502, f"{what}: could not reach agents-platform — {exc}")
 
+    @app.get("/session-heals/doctor")
+    async def session_heals_doctor() -> dict:
+        """``contributes.doctor`` entry for dead-session self-healing (card
+        41d5bf3b-9510-8160-89ad-f4293f36ccee). Reads AP-MT's heals summary over
+        this app's own identity. Red when, in the last 24h, any heal ended
+        ``heal_failed`` / ``capped`` / ``systemic``, or any session kept dying
+        with zero-token resumes (the symptom itself, even if nothing healed it).
+        Live sessions whose CLI no longer matches their agent are listed, not
+        red: the next resume heals them."""
+        try:
+            base, headers = _ap_target()
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get(f"{base}/api/sessions/heals/summary",
+                                        params={"hours": 24}, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except HTTPException as exc:
+            return {"ok": False, "detail": {"problems": [str(exc.detail)]}}
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"ok": False, "detail": {"problems": [
+                f"could not read the self-heal summary from agents-platform: {exc}"]}}
+        counts = data.get("counts") or {}
+        problems = []
+        for outcome in ("heal_failed", "capped", "systemic"):
+            if counts.get(outcome):
+                problems.append(f"{counts[outcome]} self-heal(s) ended {outcome} in the last 24h")
+        zero = data.get("zero_token_resume_failures") or []
+        if zero:
+            problems.append(f"{len(zero)} session(s) with 3+ zero-token resume failures in 24h: "
+                            + ", ".join(z["session_id"][:8] for z in zero[:5]))
+        return {"ok": not problems, "detail": {
+            "heals_24h": counts, "total": data.get("total", 0),
+            "zero_token_resume_failures": zero,
+            "cli_mismatched_sessions": data.get("cli_mismatched_sessions") or [],
+            "problems": problems}}
+
     @app.post("/gallery/upload")
     async def gallery_upload(bot_slug: str = Form(...), source: str = Form("agent"),
                              files: list[UploadFile] = File(...)) -> dict:

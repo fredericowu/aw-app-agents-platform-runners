@@ -60,6 +60,10 @@
       {
         "label": "Codex MCP scoping canary",
         "route": "/codex-scope-canary/doctor"
+      },
+      {
+        "label": "Dead-session self-heal",
+        "route": "/session-heals/doctor"
       }
     ],
     "mcp": {
