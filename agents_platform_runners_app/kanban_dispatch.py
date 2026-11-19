@@ -692,8 +692,10 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
             return {"ok": False, "reason": "another-card-run-active"}
 
         card = await asyncio.to_thread(board.card, page_id)
-        if card.get("status") != "In Progress" or card.get("target_slug") != target:
-            return {"ok": False, "reason": "expected-in-progress-card-on-source-target"}
+        card_status = card.get("status")
+        testing = qa and card_status == "Testing"
+        if (card_status != "In Progress" and not testing) or card.get("target_slug") != target:
+            return {"ok": False, "reason": "expected-active-card-on-source-target"}
         selected = (card.get("agent_slug") or "").strip()
         if selected == slug or selected in ("qa", "architect") or selected.startswith(("qa-", "architect-")):
             selected = ""
@@ -723,8 +725,12 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
             await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, stamp or "")
             raise
 
+        if testing:
+            await asyncio.to_thread(board.move, page_id, "running")
         run_id, error, rejected = await platform.dispatch(path, payload)
         if rejected:
+            if testing:
+                await asyncio.to_thread(board.move, page_id, card_status)
             await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, stamp or "")
             return {"ok": False, "reason": error}
         verified = recipient(await platform.card_runs(page_id, limit=100))

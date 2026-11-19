@@ -854,7 +854,7 @@ async def _list_tools() -> list[Tool]:
                                                      "description": "Summary of what was planned — becomes the Kanban card comment if there's a card."}},
                           "required": []}),
         Tool(name="handoff_kanban_card",
-             description=("Transfer the caller's In Progress card from QA to its Coder/workflow "
+             description=("Transfer the caller's active card from QA to its Coder/workflow "
                           "for accepted rework, or from Architect to implementation. Shares the Ready "
                           "dispatch claim. A replay of the same stage and revision returns the original run."),
              inputSchema={"type": "object", "required": ["page_id", "revision", "evidence"],
