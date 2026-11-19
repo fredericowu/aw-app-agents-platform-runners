@@ -131,7 +131,8 @@ decisions, gotchas, and architecture notes specific to this codebase.
   according to the actual rollout state. It stamps QAStatus and moves the
   card. Include the reviewed revision and verification evidence.
 - **Accepted in-scope rework:** call `handoff_kanban_card(page_id, revision,
-  evidence)` while the card is In Progress. Use the full reviewed merge SHA
+  evidence)` while the card is In Progress or in post-deployment Testing.
+  Use the full reviewed merge SHA
   and include the failed check, reproduction and expected result. The tool
   records the findings and dispatches through the Ready sweeper's shared
   claim to the card's Coder/workflow or workspace default. Verify the

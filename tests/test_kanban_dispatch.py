@@ -732,7 +732,7 @@ def test_concurrent_sweeps_only_launch_once():
 
 class HandoffBoard(FakeBoard):
     def __init__(self, **card):
-        super().__init__(card=_card(status="In Progress", **card), cards=[_ready_summary()])
+        super().__init__(card=_card(**{"status": "In Progress", **card}), cards=[_ready_summary()])
         self.comments = []
 
     def add_comment(self, page_id, text):
@@ -807,3 +807,25 @@ def test_handoff_keeps_concurrent_recipient_gate():
     assert asyncio.run(_handoff(board, platform))["reason"] == "another-card-run-active"
     assert not platform.dispatched
     assert not board.writes
+
+
+
+def test_post_deployment_qa_rework_returns_testing_card_to_implementation():
+    board = HandoffBoard(status="Testing")
+    platform = HandoffPlatform()
+    receipt = asyncio.run(_handoff(board, platform))
+    assert receipt["run_id"] == "run-1"
+    assert board.moves == [("page-1", "running")]
+
+
+def test_rejected_post_deployment_handoff_restores_testing_lane():
+    class RejectingPlatform(HandoffPlatform):
+        async def dispatch(self, path, payload):
+            return "", "HTTP 422", True
+
+    board = HandoffBoard(status="Testing")
+    board.props[kd.RUN_ID_PROPERTY] = "source"
+    receipt = asyncio.run(_handoff(board, RejectingPlatform()))
+    assert receipt == {"ok": False, "reason": "HTTP 422"}
+    assert board.moves == [("page-1", "running"), ("page-1", "Testing")]
+    assert board.props[kd.RUN_ID_PROPERTY] == "source"
