@@ -693,12 +693,13 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
         # summary's required fields the check has seen NOTHING, which is not green.
         if (not isinstance(data, dict) or not isinstance(data.get("counts"), dict)
                 or not isinstance(data.get("total"), int) or isinstance(data.get("total"), bool)
-                or not isinstance(data.get("zero_token_resume_failures", []), list)
+                or not isinstance(data.get("zero_token_resume_failures"), list)
                 or not isinstance(data.get("cli_mismatched_sessions", []), list)):
             return {"ok": False, "detail": {"problems": [
                 "agents-platform answered /api/sessions/heals/summary with an unexpected "
                 "shape (need an object with counts, total, zero_token_resume_failures) — "
-                "is AP-MT older than the self-heal release?"],
+                "an AP-MT that predates the self-heal P3 summary has no zero-token "
+                "diagnostics, so this check cannot vouch for it; degraded, not healthy"],
                 "got": str(data)[:200]}}
         counts = data["counts"]
         problems = []
