@@ -102,3 +102,16 @@ def test_execution_history_points_at_full_record_not_a_bare_detail_call():
     text = mcp_server._format_execution_history(
         "q", [{"run_id": "run-1", "score": 0.5, "text": "hit", "metadata": {}}], 5)
     assert "full_record=True" in text
+
+
+def test_event_page_is_byte_bounded_and_resumable(monkeypatch):
+    events = [{"id": f"e{i}", "ts": f"2026-11-19T12:00:{i:02d}", "kind": "tool_result",
+               "payload": {"text": "line\n" * 4000}} for i in range(20)]
+    response, _ = _run_detail(monkeypatch, {"events_limit": 20}, httpx.Response(200, json=events))
+    run = json.loads(response)
+    kept = run["events"]
+    assert len(json.dumps(kept).encode()) < 40000
+    assert 1 <= len(kept) < 20
+    assert "events_truncated" in run
+    assert run["events_next_after_id"] == kept[-1]["id"]
+    assert all(len(e["payload"]["text"]) < 2200 for e in kept)

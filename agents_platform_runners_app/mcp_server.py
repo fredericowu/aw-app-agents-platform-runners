@@ -2706,6 +2706,34 @@ def _event_without_image_bytes(value: Any) -> Any:
     return value
 
 
+_EVENT_STRING_CAP = 2000
+_EVENT_PAGE_BYTES = 32768
+
+
+def _cap_event_strings(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _cap_event_strings(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_cap_event_strings(v) for v in value]
+    if isinstance(value, str) and len(value) > _EVENT_STRING_CAP:
+        return value[:_EVENT_STRING_CAP] + f"… [+{len(value) - _EVENT_STRING_CAP} chars; use run_events for the original]"
+    return value
+
+
+def _bound_event_page(events: list) -> tuple[list, bool]:
+    """Cap each string, then keep whole events up to a serialized byte budget
+    (always at least one). Returns (kept, truncated_by_budget); the caller
+    points its cursor at the last KEPT event so nothing is skipped."""
+    kept, used = [], 0
+    for event in _cap_event_strings(events):
+        size = len(json.dumps(event, ensure_ascii=False).encode())
+        if kept and used + size > _EVENT_PAGE_BYTES:
+            return kept, True
+        kept.append(event)
+        used += size
+    return kept, False
+
+
 # Structural UUID shape only — 36 chars, 5 hyphenated hex groups (8-4-4-4-12).
 # Deliberately does NOT constrain the version/variant nibble: live session ids
 # include v4 (the common case), v7 (Codex mints these), and v3. A "canonical"
@@ -3788,10 +3816,13 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                     run["events_error"] = {"status": er.status_code}
                 else:
                     events = er.json()
-                    run["events"] = _event_without_image_bytes(events)
-                    if len(events) == limit:
-                        run["events_next_after_ts"] = events[-1]["ts"]
-                        run["events_next_after_id"] = events[-1].get("id")
+                    kept, cut = _bound_event_page(_event_without_image_bytes(events))
+                    run["events"] = kept
+                    if cut:
+                        run["events_truncated"] = "page byte budget reached; resume from the cursor"
+                    if cut or len(events) == limit:
+                        run["events_next_after_ts"] = kept[-1]["ts"]
+                        run["events_next_after_id"] = kept[-1].get("id")
             except (httpx.RequestError, ValueError) as exc:
                 run["events_error"] = {"reason": type(exc).__name__}
             return _ok(run)
