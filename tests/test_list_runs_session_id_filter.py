@@ -55,3 +55,12 @@ def test_list_runs_omits_session_id_when_absent(monkeypatch):
     asyncio.run(mcp_server._call_tool("list_runs", {}))
 
     assert "session_id" not in recorder[0]
+
+
+def test_list_runs_forwards_flow_needs_human(monkeypatch):
+    recorder: list = []
+    _patch_client(monkeypatch, recorder)
+    asyncio.run(mcp_server._call_tool("list_runs", {"flow_needs_human": True}))
+    asyncio.run(mcp_server._call_tool("list_runs", {}))
+    assert recorder[0]["flow_needs_human"] == ["true"]
+    assert "flow_needs_human" not in recorder[1]

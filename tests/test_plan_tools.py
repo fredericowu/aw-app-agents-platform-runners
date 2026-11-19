@@ -128,6 +128,13 @@ def test_each_plan_read_reaches_its_own_endpoint(monkeypatch, name, path):
     assert req.url.path == path
 
 
+def test_plan_iteration_ledger_reaches_its_endpoint(monkeypatch):
+    req = _call(monkeypatch, "plan_iteration_ledger",
+                {"slug": "my-plan", "iteration_id": "it1"}, payload={"rows": []})
+    assert req.method == "GET"
+    assert req.url.path == "/api/plans/my-plan/iterations/it1/ledger"
+
+
 def test_list_plans_reaches_the_collection_endpoint(monkeypatch):
     req = _call(monkeypatch, "list_plans", {}, payload=[])
     assert req.method == "GET"
