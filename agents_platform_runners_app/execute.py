@@ -2092,7 +2092,7 @@ def _parse_claude_json(path: Path) -> bytes | None:
             if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
                 return None
             raw = fh.read()
-        return raw if isinstance(json.loads(raw, parse_constant=_reject_json_constant), dict) else None
+        return raw if isinstance(json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant), dict) else None
     except (OSError, ValueError, RecursionError):  # deeply nested JSON
         return None
 
@@ -2816,9 +2816,13 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
         # only if absent. Warm: aw-warm-wrapper does it from this env var.
         # Cold: wrap argv; `exec "$@"` keeps stdin (the prompt) flowing.
         env[CLAUDE_JSON_SEED_ENV] = claude_seed_container_path
+        _dst = f"$HOME/{creds_file}"
+        _tmp = f"$HOME/.{creds_file}.seed.$$"
+        # cp to a sibling then rename: a failed/partial copy (quota, ENOSPC)
+        # must never leave a truncated ~/.claude.json behind.
         argv = ["sh", "-c",
-                f'[ -e "$HOME/{creds_file}" ] || cp "${CLAUDE_JSON_SEED_ENV}" "$HOME/{creds_file}" '
-                f'|| echo "aw: could not seed $HOME/{creds_file} (home not writable?)" >&2; exec "$@"',
+                f'[ -e "{_dst}" ] || {{ cp "${CLAUDE_JSON_SEED_ENV}" "{_tmp}" && mv "{_tmp}" "{_dst}"; }} '
+                f'|| {{ rm -f "{_tmp}"; echo "aw: could not seed {_dst} (home not writable?)" >&2; }}; exec "$@"',
                 "sh", *argv]
     # Codex has no --mcp-config flag (mcp_config_flag: None) to regenerate a
     # fresh caller-identity header every turn the way claude does — its MCP

@@ -324,3 +324,69 @@ def test_nonstandard_json_master_falls_back_to_backup(tmp_path, monkeypatch):
     _build("s9")
     seed = home / ".claude" / "isolated" / "s9" / "claude.json.seed"
     assert json.loads(seed.read_text()) == {"v": 1}
+
+
+def _run_cold_wrapper(tmp_path, monkeypatch, seed_text, *, existing=None, seed_present=True, fsize=None):
+    """Execute the real generated `sh -c` wrapper with `cat` as the 'CLI'."""
+    import subprocess
+    home = _make_home(tmp_path)
+    _direct_env(tmp_path, monkeypatch, home)
+    _img, argv, kw, _mcp = _build("w1")
+    cont_home = tmp_path / "chome"
+    cont_home.mkdir()
+    if existing is not None:
+        (cont_home / ".claude.json").write_text(existing)
+    seed = tmp_path / "seed.json"
+    if seed_present:
+        seed.write_text(seed_text)
+    assert argv[:2] == ["sh", "-c"] and argv[3] == "sh"
+    # replace aw-cli-with-quota claude ... with cat; keep the wrapper script as generated
+    import resource
+    pre = (lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))) if fsize else None
+    res = subprocess.run(["sh", "-c", argv[2], "sh", "cat"], input="PROMPT", text=True, capture_output=True,
+                         preexec_fn=pre,
+                         env={"PATH": os.environ["PATH"], "HOME": str(cont_home), "AW_CLAUDE_JSON_SEED": str(seed)})
+    return cont_home, res
+
+
+import os  # noqa: E402
+
+
+def test_cold_wrapper_seeds_atomically_and_passes_stdin(tmp_path, monkeypatch):
+    cont_home, res = _run_cold_wrapper(tmp_path, monkeypatch, '{"a": 1}')
+    assert res.stdout == "PROMPT"  # exec "$@" keeps stdin
+    assert (cont_home / ".claude.json").read_text() == '{"a": 1}'
+    assert [p.name for p in cont_home.iterdir()] == [".claude.json"]  # no temp left
+
+
+def test_cold_wrapper_never_overwrites_an_existing_config(tmp_path, monkeypatch):
+    cont_home, res = _run_cold_wrapper(tmp_path, monkeypatch, '{"a": 1}', existing='{"mine": 1}')
+    assert (cont_home / ".claude.json").read_text() == '{"mine": 1}' and res.stdout == "PROMPT"
+
+
+def test_cold_wrapper_failed_copy_leaves_no_file_and_still_execs(tmp_path, monkeypatch):
+    cont_home, res = _run_cold_wrapper(tmp_path, monkeypatch, "", seed_present=False)
+    assert not (cont_home / ".claude.json").exists()
+    assert [p.name for p in cont_home.iterdir()] == []
+    assert "could not seed" in res.stderr and res.stdout == "PROMPT"
+
+
+def test_utf16_master_falls_back_to_backup(tmp_path, monkeypatch):
+    import json
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_bytes('{"x": 1}'.encode("utf-16"))
+    bdir = home / ".claude" / "backups"
+    bdir.mkdir()
+    (bdir / ".claude.json.backup.1").write_text('{"v": 1}')
+    _direct_env(tmp_path, monkeypatch, home)
+    _build("s10")
+    seed = home / ".claude" / "isolated" / "s10" / "claude.json.seed"
+    assert json.loads(seed.read_text()) == {"v": 1}
+
+
+def test_cold_wrapper_partial_copy_never_publishes_a_truncated_config(tmp_path, monkeypatch):
+    # EFBIG mid-copy (quota/ENOSPC stand-in): the seed is bigger than the limit.
+    cont_home, res = _run_cold_wrapper(tmp_path, monkeypatch, '{"k": "' + "x" * 8000 + '"}', fsize=512)
+    assert not (cont_home / ".claude.json").exists(), list(cont_home.iterdir())
+    assert [p.name for p in cont_home.iterdir()] == []
+    assert "could not seed" in res.stderr and res.stdout == "PROMPT"
