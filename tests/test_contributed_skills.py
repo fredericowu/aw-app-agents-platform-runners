@@ -138,5 +138,5 @@ def test_the_qa_contract_scopes_set_blocker_to_the_review(declared):
     verdict failed.
     """
     text = (APP_DIR / declared["aw-agent-qa"]).read_text()
-    assert "not your own bookkeeping" in text.lower()
+    assert "reserve `set_blocker` for a review that cannot reach a verdict" in text.lower()
     assert "mark_flow_done" in text
