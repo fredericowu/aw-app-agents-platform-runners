@@ -40,6 +40,7 @@ synchronous statement hits an ``await``), but an in-place mutation
 from __future__ import annotations
 
 import asyncio
+import uuid
 import json
 import logging
 import os
@@ -852,6 +853,16 @@ async def _list_tools() -> list[Tool]:
                           "properties": {"summary": {"type": "string",
                                                      "description": "Summary of what was planned — becomes the Kanban card comment if there's a card."}},
                           "required": []}),
+        Tool(name="handoff_kanban_card",
+             description=("Transfer the caller's In Progress card from QA to its Coder/workflow "
+                          "for accepted rework, or from Architect to implementation. Shares the Ready "
+                          "dispatch claim. A replay of the same stage and revision returns the original run."),
+             inputSchema={"type": "object", "required": ["page_id", "revision", "evidence"],
+                          "properties": {
+                              "page_id": {"type": "string"},
+                              "revision": {"type": "string", "description": "Full reviewed merge SHA or stable design reference."},
+                              "evidence": {"type": "string", "description": "Accepted scope, concrete checks/findings and links."},
+                          }}),
         Tool(name="run_ready_cards",
              description=("Fire an agents-platform run for every Kanban card sitting in "
                           "`Ready`. The board half runs against aw-app-notion, the dispatch "
@@ -3412,6 +3423,22 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             r = await c.post(f"{BASE}/api/runs/{own_run_id}/mark-planned",
                              json={"summary": args.get("summary") or ""})
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+        if name == "handoff_kanban_card":
+            source_id = _caller_run_id(args)
+            if not source_id:
+                return _err(400, "Could not identify the calling run")
+            try:
+                page_id = str(uuid.UUID(args["page_id"]))
+                result = await kanban_dispatch.handoff_card(
+                    _board_client(), kanban_dispatch.PlatformClient(c, BASE),
+                    source_id=source_id, page_id=page_id,
+                    revision=args["revision"], evidence=args["evidence"])
+            except ValueError as exc:
+                return _err(400, str(exc))
+            except RuntimeError as exc:
+                return _err(503, str(exc))
+            return _ok(result)
+
         if name == "run_ready_cards":
             # One implementation, two triggers: this manual catch-all and the
             # in-process watchdog (plugin.py) both run kanban_dispatch's
