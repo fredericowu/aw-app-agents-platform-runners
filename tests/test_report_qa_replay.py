@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import pytest
 
 from scripts.report_qa_replay import build_report
@@ -8,7 +10,7 @@ def test_report_qa_replay_keeps_verdicts_and_excludes_incomplete_usage():
     manifest = []
     for number, input_tokens in enumerate([100, 200, 0], start=1):
         run_id = f"{number:032x}"
-        helper_id = f"{number + 10:032x}"
+        helper_id = str(UUID(int=number + 10))
         for row_id, tokens in [(run_id, input_tokens), (helper_id, 10)]:
             rows[row_id] = {
                 "id": row_id, "kind": "agent", "status": "success",
