@@ -135,10 +135,30 @@ def test_route_runs_gh_where_it_exists(monkeypatch):
         return Proc()
 
     monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", gh)
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
     client = TestClient(build_routes())
-    r = client.post("/qa-evidence/pr", json={"repo": "owner/repo", "pr": 7})
+    ok = {"x-api-key": "k"}
+    r = client.post("/qa-evidence/pr", json={"repo": "owner/repo", "pr": 7}, headers=ok)
     assert r.json() == {"state": "MERGED", "merge_sha": "b" * 40}
-    assert client.post("/qa-evidence/pr", json={"repo": "o/r", "pr": "7"}).status_code == 400
+    assert client.post("/qa-evidence/pr", json={"repo": "o/r", "pr": "7"}, headers=ok).status_code == 400
+
+
+def test_route_rejects_unauthenticated_callers_before_touching_gh(monkeypatch):
+    from fastapi.testclient import TestClient
+    from agents_platform_runners_app.routes import build_routes
+
+    async def gh(*args, **kwargs):
+        raise AssertionError("gh must not run for an unauthenticated caller")
+
+    monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", gh)
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
+    client = TestClient(build_routes())
+    body = {"repo": "owner/repo", "pr": 7}
+    assert client.post("/qa-evidence/pr", json=body).status_code == 401
+    assert client.post("/qa-evidence/pr", json=body, headers={"x-api-key": "bad"}).status_code == 401
+    monkeypatch.delenv("AW_WORKSPACE_API_KEY")
+    monkeypatch.setattr(qa_evidence.kanban_dispatch if hasattr(qa_evidence, "kanban_dispatch") else __import__("agents_platform_runners_app.kanban_dispatch", fromlist=["x"]), "_from_env_file", lambda n: None)
+    assert client.post("/qa-evidence/pr", json=body, headers={"x-api-key": "k"}).status_code == 503
 
 
 def test_legacy_text_still_dispatches(outbound):

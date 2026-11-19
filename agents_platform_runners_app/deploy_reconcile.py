@@ -543,6 +543,10 @@ def _evaluate_card(board: "kanban_dispatch.BoardClient", summary: dict, *,
         # confirmed success.
         row["_stamp"] = {"verdict": "invalid", "invalid_commented": row["already_reported"],
                          "unknown_streak": 0}
+        # Keep producer evidence across a temporarily invalid card, so it is
+        # still there once the deployment metadata is corrected.
+        if isinstance(prior.get("qa_evidence"), dict):
+            row["_stamp"]["qa_evidence"] = prior["qa_evidence"]
         return row
 
     klass, name = parse_component(component)
@@ -619,8 +623,20 @@ def _carry_qa_evidence(prior: dict, row: dict) -> None:
         row["_stamp"]["qa_evidence"] = evidence
 
 
+# Notion's rich_text property writer silently cuts a value to 2000 chars,
+# which turns the stamp into unparseable JSON (and reconcile reads that as an
+# empty stamp). Never write past it.
+PROPERTY_LIMIT = 2000
+
+
 def _stamp(board: "kanban_dispatch.BoardClient", page_id: str, stamp: dict) -> None:
     import datetime as _dt
+    if len(json.dumps(stamp)) > PROPERTY_LIMIT and "qa_evidence" in stamp:
+        # Evidence that does not fit is dropped whole (QA gets the legacy
+        # text) rather than corrupting the stamp's own verdict fields.
+        log.warning("deploy_reconcile: qa_evidence for %s exceeds the %d-char property "
+                    "limit; not stored", page_id, PROPERTY_LIMIT)
+        stamp = {k: v for k, v in stamp.items() if k != "qa_evidence"}
     board.set_property(page_id, "DeployCheckResult", json.dumps(stamp))
     board.set_property(page_id, "LastDeployCheckAt",
                        _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d"))

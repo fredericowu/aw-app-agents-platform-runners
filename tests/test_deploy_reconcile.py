@@ -1027,3 +1027,30 @@ def test_none_sentinel_row_carries_evidence(monkeypatch):
     rows = dr.check_deployed(board, max_cards=10)
     row = (rows["moved"] + rows["still_waiting"])[0]
     assert row["qa_evidence"] == _EVIDENCE
+
+
+def test_invalid_card_keeps_stamped_evidence_until_metadata_is_fixed(monkeypatch):
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+    board = FakeBoard({"p1": _card(DeployComponent="", DeployCheckResult=json.dumps({"qa_evidence": _EVIDENCE}))})
+    dr.check_deployed(board, max_cards=10)
+    assert json.loads(board._cards["p1"]["DeployCheckResult"])["qa_evidence"] == _EVIDENCE
+    board._cards["p1"]["DeployComponent"] = "app:notion"
+    row = dr.check_deployed(board, max_cards=10)["moved"][0]
+    assert row["qa_evidence"] == _EVIDENCE
+
+
+def test_oversized_evidence_never_corrupts_the_stamp_at_the_property_limit(monkeypatch):
+    """The real property writer cuts at 2000 chars; model it."""
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+
+    class CuttingBoard(FakeBoard):
+        def set_property(self, page_id, name, value):
+            return super().set_property(page_id, name, value[:dr.PROPERTY_LIMIT]
+                                        if isinstance(value, str) else value)
+
+    big = {**_EVIDENCE, "known_gaps": ["g" * 390] * 8}
+    board = CuttingBoard({"p1": _card(DeployCheckResult=json.dumps({"qa_evidence": big}))})
+    row = dr.check_deployed(board, max_cards=10)["moved"][0]
+    stored = json.loads(board._cards["p1"]["DeployCheckResult"])  # still valid JSON
+    assert stored["verdict"] == "deployed" and "qa_evidence" not in stored
+    assert row["qa_evidence"] == big  # this pass still dispatches it
