@@ -66,7 +66,8 @@ exec 5<"$FIFO_IN"
 # runner's validated per-run copy — only if absent. ~/.claude.json is NOT
 # bind-mounted: a shared single-file mount made concurrent CLIs corrupt it.
 if [ -n "${AW_CLAUDE_JSON_SEED:-}" ] && [ ! -e "$HOME/.claude.json" ] && [ -f "$AW_CLAUDE_JSON_SEED" ]; then
-    cp "$AW_CLAUDE_JSON_SEED" "$HOME/.claude.json" 2>/dev/null || true
+    cp "$AW_CLAUDE_JSON_SEED" "$HOME/.claude.json" \
+        || echo "aw-warm-wrapper: could not seed $HOME/.claude.json (home not writable? old image?)" >&2
 fi
 
 "$@" <&5 >"$FIFO_OUT" 2>"$RUNDIR/claude_err.log" 3<&- &

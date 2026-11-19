@@ -1552,12 +1552,21 @@ def _sync_home_creds_into_workspace(real_home: Path, spec: dict) -> None:
                 # .claude.json is rewritten in place by live CLIs: never let a
                 # torn/truncated copy replace the last valid cached one (the
                 # per-run seed falls back to this cache).
-                if rel == spec.get("creds_file") and rel.endswith(".json") \
-                        and _parse_claude_json(src) is None:
-                    log.warning("execute: %s does not parse — keeping cached copy", src)
-                    continue
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
+                if rel == spec.get("creds_file") and rel.endswith(".json"):
+                    # Publish the exact bytes that were validated (a second
+                    # read could catch a new torn write), via tmp + rename.
+                    raw = _parse_claude_json(src)
+                    if raw is None:
+                        log.warning("execute: %s does not parse — keeping cached copy", src)
+                        continue
+                    tmp = dst.with_name(f".{dst.name}.{os.getpid()}.tmp")
+                    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with os.fdopen(fd, "wb") as fh:
+                        fh.write(raw)
+                    os.replace(tmp, dst)
+                else:
+                    shutil.copy2(src, dst)
         except Exception:
             log.warning("execute: creds resync %s -> %s failed", src, dst, exc_info=True)
 
@@ -2794,7 +2803,8 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
         # Cold: wrap argv; `exec "$@"` keeps stdin (the prompt) flowing.
         env[CLAUDE_JSON_SEED_ENV] = claude_seed_container_path
         argv = ["sh", "-c",
-                f'[ -e "$HOME/{creds_file}" ] || cp "${CLAUDE_JSON_SEED_ENV}" "$HOME/{creds_file}" 2>/dev/null; exec "$@"',
+                f'[ -e "$HOME/{creds_file}" ] || cp "${CLAUDE_JSON_SEED_ENV}" "$HOME/{creds_file}" '
+                f'|| echo "aw: could not seed $HOME/{creds_file} (home not writable?)" >&2; exec "$@"',
                 "sh", *argv]
     # Codex has no --mcp-config flag (mcp_config_flag: None) to regenerate a
     # fresh caller-identity header every turn the way claude does — its MCP

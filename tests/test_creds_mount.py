@@ -245,3 +245,31 @@ def test_fifo_master_does_not_hang_and_falls_back(tmp_path, monkeypatch):
     _build("s6")
     seed = home / ".claude" / "isolated" / "s6" / "claude.json.seed"
     assert json.loads(seed.read_text()) == {"v": 1}
+
+
+def test_resync_publishes_validated_bytes_not_a_second_read(tmp_path, monkeypatch):
+    """The cache must get the bytes that were validated, even if the source is
+    rewritten (torn) between validation and publish."""
+    import json
+    home = _make_home(tmp_path)
+    (home / ".claude.json").write_text('{"good": 1}')
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(ws))
+    real_parse = execute_mod._parse_claude_json
+
+    def parse_then_tear(path):
+        raw = real_parse(path)
+        path.write_text('{"torn":')  # a live writer starts rewriting right after
+        return raw
+
+    monkeypatch.setattr(execute_mod, "_parse_claude_json", parse_then_tear)
+    _REAL_SYNC(home, execute_mod.CLI_SPECS["claude"])
+    assert json.loads((ws / ".claude.json").read_text()) == {"good": 1}
+
+
+def test_cold_wrapper_reports_a_failed_seed_copy(tmp_path, monkeypatch):
+    home = _make_home(tmp_path)
+    _direct_env(tmp_path, monkeypatch, home)
+    _img, argv, _kw, _mcp = _build("s7")
+    assert "could not seed" in argv[2] and ">&2" in argv[2]
