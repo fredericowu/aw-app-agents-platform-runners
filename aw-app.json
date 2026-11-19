@@ -144,6 +144,11 @@
         "description": "Guided agent/workflow execution via the agent-mcp server \u2014 the conductor is a MANAGER who delegates to platform agents through discovery \u2192 exploration \u2192 decomposition \u2192 plan approval \u2192 execution \u2192 validation \u2192 iteration \u2192 final report, never executing the work itself."
       },
       {
+        "id": "aw-agents-flow-edge-cases",
+        "path": "skills/aw-agents-flow-edge-cases/SKILL.md",
+        "description": "On-demand Agents Flow guidance for terminal tool failures, partial reviews, ad-hoc card binding and callback recovery."
+      },
+      {
         "id": "aw-agents-flow",
         "path": "skills/aw-agents-flow/SKILL.md",
         "description": "The Agents Flow handoff contract \u2014 the three terminal actions (run_agent_async / return_to_caller_agent / mark_flow_done) an agent must end its turn with when it is a node in an enabled flow. agents-platform's executor auto-injects this skill at dispatch, so it must exist in the workspace skills tree or every flow agent runs without the contract and gets escalated to a human."

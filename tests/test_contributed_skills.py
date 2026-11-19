@@ -119,7 +119,11 @@ def test_the_flow_contract_separates_a_failed_task_from_a_failed_tool_call(decla
     id. That path is strictly better than any card-status improvisation, so
     the contract has to point at it by name.
     """
-    text = (APP_DIR / declared["aw-agents-flow"]).read_text()
+    core = (APP_DIR / declared["aw-agents-flow"]).read_text()
+    assert len(core.encode("utf-8")) <= 3000
+    assert 'load_skill(name="aw-agents-flow-edge-cases")' in core
+    assert "When the terminal action itself FAILS to execute" not in core
+    text = (APP_DIR / declared["aw-agents-flow-edge-cases"]).read_text()
     assert "When the terminal action itself FAILS to execute" in text
     # Naming the runtime functions is what makes the claim checkable by
     # whoever doubts it, instead of another rule to take on faith.
