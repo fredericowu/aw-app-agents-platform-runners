@@ -728,3 +728,82 @@ def test_concurrent_sweeps_only_launch_once():
 
     assert sum(result["dispatched"] for result in asyncio.run(race())) == 1
     assert len(platform.dispatched) == 1
+
+
+class HandoffBoard(FakeBoard):
+    def __init__(self, **card):
+        super().__init__(card=_card(status="In Progress", **card), cards=[_ready_summary()])
+        self.comments = []
+
+    def add_comment(self, page_id, text):
+        self.comments.append(text)
+
+    def default_coder(self):
+        return "coder"
+
+
+class HandoffPlatform(FakePlatform):
+    def __init__(self, source_slug="qa", *, ambiguous=False):
+        self.runs = [{"id": "source", "source_slug": source_slug, "workspace": "aw",
+                      "target_slug": "some-target", "status": "running"}]
+        self.ambiguous = ambiguous
+        super().__init__(latest=self.runs[0])
+
+    async def card_runs(self, page_id, *, limit):
+        return list(self.runs)
+
+    async def dispatch(self, path, payload):
+        await super().dispatch(path, payload)
+        self.runs.insert(0, {"id": "run-1", "source_slug": path.split("/")[3],
+                             "workspace": payload["workspace"], "status": "pending",
+                             "parent_run_id": payload["caller_run_id"],
+                             "target_slug": payload["target_slug"], "input": payload["input"]})
+        return ("", "timeout", False) if self.ambiguous else ("run-1", "", False)
+
+
+def _handoff(board, platform, *, revision="abc123"):
+    return kd.handoff_card(board, platform, source_id="source", page_id="page-1",
+                           revision=revision, evidence="CI omits the mobile browser specs. "
+                           "Inherited VPN 404s are tracked separately.")
+
+
+def test_mobile_rework_reconciles_timeout_and_replays_against_sweeper():
+    async def scenario():
+        board = HandoffBoard()
+        platform = HandoffPlatform(ambiguous=True)
+        accepted, sweep, competing = await asyncio.gather(
+            _handoff(board, platform), kd.sweep_ready(board, platform), _handoff(board, platform))
+        assert competing["reason"] == "workspace-dispatch-in-progress"
+        assert sweep["dispatched"] == 0
+        assert accepted["run_id"] == "run-1"
+        assert accepted["target_slug"] == "some-target"
+        assert accepted["revision"] == "abc123"
+        assert "CI omits" in board.comments[0]
+        assert "Inherited VPN" in board.comments[0]
+        assert board.props[kd.RUN_ID_PROPERTY] == "run-1"
+        assert not board.moves
+
+        replay = await _handoff(board, platform)
+        assert replay["reused"] and replay["run_id"] == accepted["run_id"]
+        assert len(platform.dispatched) == 1
+        assert len(board.comments) == 2
+
+    asyncio.run(scenario())
+
+
+def test_architect_handoff_resolves_default_coder():
+    board = HandoffBoard(agent_slug="architect")
+    platform = HandoffPlatform("architect")
+    receipt = asyncio.run(_handoff(board, platform, revision="design:1"))
+    assert receipt["recipient"] == "coder"
+    assert receipt["run_id"] == "run-1"
+    assert platform.dispatched[0][0] == "/api/agents/coder/run"
+
+
+def test_handoff_keeps_concurrent_recipient_gate():
+    board = HandoffBoard()
+    platform = HandoffPlatform()
+    platform.runs.append({"id": "other", "status": "queued"})
+    assert asyncio.run(_handoff(board, platform))["reason"] == "another-card-run-active"
+    assert not platform.dispatched
+    assert not board.writes

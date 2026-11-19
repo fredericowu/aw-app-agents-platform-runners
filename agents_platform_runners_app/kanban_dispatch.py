@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import hashlib
 import http.client
 import json
 import logging
@@ -67,6 +68,8 @@ DEFAULT_TIMEOUT_S = 30.0
 # run. The monolith also wrote QARunId/QAAgent for qa-* agents; that stayed
 # there with the QA flow and is not reproduced here.
 RUN_ID_PROPERTY = "AgentRunId"
+ACTIVE_RUN_STATUSES = ("pending", "running", "queued")
+DISPATCH_FENCE = Path(__file__).resolve().parents[1] / "aw-app.json"
 
 # The monolith's default when a card names no target. Kept identical: cards
 # created before this port still rely on it.
@@ -426,12 +429,15 @@ class PlatformClient:
         self._base = base.rstrip("/")
 
     async def latest_run(self, page_id: str) -> dict | None:
+        runs = await self.card_runs(page_id, limit=1)
+        return runs[0] if runs else None
+
+    async def card_runs(self, page_id: str, *, limit: int) -> list[dict]:
         resp = await self._c.get(f"{self._base}/api/runs",
-                                 params={"notion_task_id": page_id, "category": "work", "limit": 1})
+                                 params={"notion_task_id": page_id, "category": "work", "limit": limit})
         if resp.status_code != 200:
             raise RuntimeError(f"Card-bound run lookup failed for {page_id} (HTTP {resp.status_code})")
-        runs = resp.json() or []
-        return runs[0] if runs else None
+        return resp.json() or []
 
     async def validate_agent(self, slug: str, *, setting: str = "AgentSlug") -> None:
         workspace = _this_workspace()
@@ -516,7 +522,7 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
         ready_name = summary.get("status")
         try:
             latest = await platform.latest_run(page_id)
-            if latest and latest.get("status") in ("pending", "running", "queued"):
+            if latest and latest.get("status") in ACTIVE_RUN_STATUSES:
                 results.append({**row, "skipped": "run-already-in-flight",
                                 "run_id": latest.get("id")})
                 continue
@@ -551,8 +557,7 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
             # manifest lock while changing the board and launching. This closes
             # the check/write gap between workspace triggers. The Notion stamp
             # still fences legacy dispatchers that do not share this filesystem.
-            manifest = Path(__file__).resolve().parents[1] / "aw-app.json"
-            with manifest.open("rb") as fence:
+            with DISPATCH_FENCE.open("rb") as fence:
                 try:
                     fcntl.flock(fence, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
@@ -567,7 +572,7 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
                     continue
                 newest = await platform.latest_run(page_id)
                 if newest and (newest.get("id") != (latest or {}).get("id")
-                               or newest.get("status") in ("pending", "running", "queued")):
+                               or newest.get("status") in ACTIVE_RUN_STATUSES):
                     results.append({**row, "skipped": "card-run-changed", "run_id": newest.get("id")})
                     continue
                 previous_stamp = await asyncio.to_thread(
@@ -618,6 +623,123 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
     dispatched = sum(1 for r in results if r.get("run_id") and not r.get("skipped"))
     return {"considered": len(results), "dispatched": dispatched,
             "dry_run": dry_run, "results": results}
+
+
+async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_id: str,
+                       page_id: str, revision: str, evidence: str) -> dict:
+    """Transfer an in-progress card from its active QA or Architect run.
+
+    The source is the only active run exempted. The shared dispatch lock
+    serializes this transition with manual and scheduled Ready dispatch.
+    A stable marker in the recipient input reconciles a lost response.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9./:@_-]{0,199}", revision) or not evidence.strip():
+        raise ValueError("A stable reviewed revision or design reference and evidence are required")
+
+    with DISPATCH_FENCE.open("rb") as fence:
+        try:
+            fcntl.flock(fence, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"ok": False, "reason": "workspace-dispatch-in-progress"}
+
+        runs = await platform.card_runs(page_id, limit=5000)
+        source = next((run for run in runs if run["id"] == source_id), None)
+        if not source or source.get("workspace") != _this_workspace():
+            raise ValueError("Caller must be a work run bound to this card and workspace")
+        slug = source.get("source_slug") or ""
+        qa = slug == "qa" or slug.startswith("qa-")
+        architect = slug == "architect" or slug.startswith("architect-")
+        if not (qa or architect):
+            raise ValueError("Only the card's QA or Architect run can use this handoff")
+
+        target = source.get("target_slug")
+        if not target:
+            raise ValueError("Caller has no target")
+        stage = "qa-rework" if qa else "architect-build"
+        key = hashlib.sha256(json.dumps([page_id, target, stage, revision]).encode()).hexdigest()
+        marker = f"Kanban handoff {key}"
+        token = f"handoff:{key}"
+        receipt = {"page_id": page_id, "target_slug": target, "revision": revision,
+                   "source_run_id": source_id, "evidence": evidence}
+
+        def recipient(rows: list[dict]) -> dict | None:
+            return next((r for r in rows if r.get("target_slug") == target
+                         and r.get("workspace") == _this_workspace()
+                         and r.get("parent_run_id")
+                         and ((r.get("input") or {}).get("input") or "").startswith(marker + "\n")), None)
+
+        def result(run: dict, *, reused: bool) -> dict:
+            return {**receipt, "ok": True, "run_id": run["id"],
+                    "recipient": run.get("source_slug"), "reused": reused}
+
+        previous = recipient(runs)
+        if previous:
+            response = result(previous, reused=True)
+            try:
+                props = await asyncio.to_thread(board.properties, page_id, [RUN_ID_PROPERTY])
+                if props.get(RUN_ID_PROPERTY) == token:
+                    await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, previous["id"])
+                    await asyncio.to_thread(board.add_comment, page_id,
+                                            f"{marker} → {previous['id']} ({previous.get('source_slug')})")
+            except BoardUnavailable as exc:
+                response["board_record_error"] = str(exc)
+            return response
+        if len(runs) == 5000:
+            return {"ok": False, "reason": "incomplete-run-history"}
+        if source.get("status") not in ACTIVE_RUN_STATUSES:
+            return {"ok": False, "reason": "source-terminated"}
+        if any(r["id"] != source_id and r.get("status") in ACTIVE_RUN_STATUSES for r in runs):
+            return {"ok": False, "reason": "another-card-run-active"}
+
+        card = await asyncio.to_thread(board.card, page_id)
+        if card.get("status") != "In Progress" or card.get("target_slug") != target:
+            return {"ok": False, "reason": "expected-in-progress-card-on-source-target"}
+        selected = (card.get("agent_slug") or "").strip()
+        if selected == slug or selected in ("qa", "architect") or selected.startswith(("qa-", "architect-")):
+            selected = ""
+        card = {**card, "agent_slug": selected}
+        default_coder = ""
+        if selected:
+            await platform.validate_agent(selected)
+        elif not card.get("workflow_slug"):
+            default_coder = await resolve_default_coder(platform, board.default_coder)
+        if default_coder == slug or default_coder in ("qa", "architect") or default_coder.startswith(("qa-", "architect-")):
+            raise ValueError("Workspace default must name a Coder")
+
+        stamp = (await asyncio.to_thread(board.properties, page_id, [RUN_ID_PROPERTY])).get(RUN_ID_PROPERTY)
+        if str(stamp or "").startswith(("handoff:", "mono:", "mt:")):
+            return {"ok": False, "reason": "unresolved-card-claim", "claim": stamp}
+
+        findings = (f"{marker}\nStage: {stage}\nCard: {page_id}\nTarget: {target}\n"
+                    f"Revision: {revision}\nSource run: {source_id}\n\n{evidence.strip()}")
+        path, payload = dispatch_payload(card, f"{findings}\n\n{build_run_input(card)}",
+                                         default_coder=default_coder)
+        payload["caller_run_id"] = source_id
+        if not await asyncio.to_thread(claim_card, board, page_id, token=token):
+            return {"ok": False, "reason": "claim-lost"}
+        try:
+            await asyncio.to_thread(board.add_comment, page_id, findings)
+        except BoardUnavailable:
+            await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, stamp or "")
+            raise
+
+        run_id, error, rejected = await platform.dispatch(path, payload)
+        if rejected:
+            await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, stamp or "")
+            return {"ok": False, "reason": error}
+        verified = recipient(await platform.card_runs(page_id, limit=100))
+        if (not verified or verified.get("source_slug") != path.split("/")[3]
+                or (run_id and run_id != verified["id"])):
+            return {"ok": False, "reason": error or "dispatch not yet visible in card history",
+                    "claim": token}
+        response = result(verified, reused=False)
+        try:
+            await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, verified["id"])
+            await asyncio.to_thread(board.add_comment, page_id,
+                                    f"{marker} → {verified['id']} ({verified.get('source_slug')})")
+        except BoardUnavailable as exc:
+            response["board_record_error"] = str(exc)
+        return response
 
 
 __all__ = ["BoardClient", "BoardUnavailable", "PlatformClient", "build_run_input",
