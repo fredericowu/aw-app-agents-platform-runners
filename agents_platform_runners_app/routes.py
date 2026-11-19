@@ -14,6 +14,7 @@ that the dependency actually did its job, not just that it's declared.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import uuid
@@ -30,6 +31,7 @@ from . import notion_token_sync as notion_token_sync_mod
 from . import observability_push as observability_push_mod
 from . import otel_env as otel_env_mod
 from . import platform_base as platform_base_mod
+from . import qa_evidence as qa_evidence_mod
 from . import runner_registration as runner_registration_mod
 from . import shared_redis
 from . import telegram_report as telegram_report_mod
@@ -201,6 +203,26 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
         except Exception as exc:  # noqa: BLE001 — surfaced as an error, never as []
             raise HTTPException(502, f"could not list warm containers: {exc}") from exc
         return {"warm_enabled": warm_pool.enabled(), "containers": containers}
+
+    @app.post("/qa-evidence/pr")
+    async def qa_evidence_pr(request: Request, data: dict = Body(...)) -> dict:
+        """PR state + merge SHA for QA evidence verification. The MCP gateway
+        child has no authenticated ``gh``, so it reaches this route over the
+        published workspace API and this process does the GitHub lookup."""
+        # The standalone mount has no IdentityGuard and this route spends the
+        # workspace's GitHub credential, so authenticate at the boundary.
+        expected = os.environ.get("AW_WORKSPACE_API_KEY") or kanban_dispatch._from_env_file("AW_WORKSPACE_API_KEY")
+        if not expected:
+            raise HTTPException(503, "AW_WORKSPACE_API_KEY is not set; PR lookup is unavailable")
+        if not hmac.compare_digest(request.headers.get("x-api-key", ""), expected):
+            raise HTTPException(401, "invalid or missing X-Api-Key")
+        repo, pr = data.get("repo"), data.get("pr")
+        if not isinstance(repo, str) or not isinstance(pr, int) or isinstance(pr, bool):
+            raise HTTPException(400, "repo (string) and pr (integer) are required")
+        try:
+            return await qa_evidence_mod.lookup_pr(repo, pr)
+        except ValueError as exc:
+            raise HTTPException(502, str(exc)) from exc
 
     @app.get("/codex-scope-canary/doctor")
     async def codex_scope_canary_doctor() -> dict:

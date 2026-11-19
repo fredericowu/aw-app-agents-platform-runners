@@ -120,6 +120,7 @@ def _agents_base_transport() -> httpx.AsyncHTTPTransport:
 # "no third-party imports" property.
 from . import kanban_dispatch  # noqa: E402
 from . import deploy_reconcile  # noqa: E402
+from . import qa_evidence  # noqa: E402
 from . import work_loop as work_loop_mod  # noqa: E402
 from . import platform_base  # noqa: E402
 from . import telegram_report as telegram_report_mod  # noqa: E402
@@ -637,6 +638,7 @@ async def _list_tools() -> list[Tool]:
                           "properties": {"slug": {"type": "string"},
                                          "group_slug": {"type": "string"},
                                          "input": {"type": "string"},
+                                         "qa_evidence": qa_evidence.QA_EVIDENCE_SCHEMA,
                                          "target_slug": {"type": "string",
                                                          "description": "Slug of the Target this run is delivering against. REQUIRED."},
                                          "target_id": {"type": ["string", "null"]},
@@ -650,8 +652,11 @@ async def _list_tools() -> list[Tool]:
                                                              "description": "Optional session_id to redirect the callback to instead of your own session — e.g. a session_id returned by a prior run_agent_async call. That session's agent gets woken with this run's result instead of you."},
                                          "qa_rerun": {"type": "boolean", "default": False,
                                                       "description": "Override the server-side QA dedup guard (see above), which otherwise 409s a second qa-* dispatch for the same card/target. Use it when new commits merged AFTER the prior verdict and the delivery genuinely needs re-verifying, or to run a deliberate second QA in parallel (e.g. a different model). Do NOT use it to retry a dispatch you think failed — a 409 means one already exists, so read that run instead."}},
-                          "required": ["input", "target_slug"],
-                          "anyOf": [{"required": ["slug"]}, {"required": ["group_slug"]}]}),
+                          "required": ["target_slug"],
+                          "allOf": [
+                              {"anyOf": [{"required": ["slug"]}, {"required": ["group_slug"]}]},
+                              {"anyOf": [{"required": ["input"]}, {"required": ["qa_evidence"]}]},
+                          ]}),
         Tool(name="run_workflow_async",
              description=("Start a workflow run in the background and return its run_id.\n\n"
                           "**Call-me-back (default ON):** same as `run_agent_async` — your "
@@ -2969,6 +2974,8 @@ async def _deploy_followups(c: httpx.AsyncClient, board: "kanban_dispatch.BoardC
                 "qa_rerun": True,
                 "workspace": _own_workspace()}
         try:
+            if "qa_evidence" in row:
+                body["input"]["input"] = await qa_evidence.render_qa_evidence(row["qa_evidence"])
             qr = await c.post(f"{BASE}/api/agent-groups/qas/run", json=body)
             if qr.status_code == 200:
                 row["qa_dispatch"] = {"run_id": qr.json().get("run_id")}
@@ -3222,7 +3229,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
         if name == "run_agent_async":
             if not args.get("target_slug") and not args.get("target_id"):
                 return _err(400, "target_slug is required. Use list_targets to find an existing Target or create_target to make one, then pass target_slug.")
-            body: dict[str, Any] = {"input": {"input": args["input"]}}
+            body: dict[str, Any] = {}
             if args.get("target_id"):
                 body["target_id"] = args["target_id"]
             if args.get("target_slug"):
@@ -3271,6 +3278,24 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                 path = f"/api/agents/{args['slug']}/run"
             else:
                 return _err(400, "slug or group_slug is required")
+            if "qa_evidence" in args:
+                group = args.get("group_slug")
+                slug = args.get("slug")
+                is_qa = (
+                    group == "qas" and (slug is None or work_loop_mod.is_qa_agent(slug))
+                    or not group and work_loop_mod.is_qa_agent(slug)
+                )
+                if not is_qa:
+                    return _err(400, "qa_evidence is only accepted for QA dispatch")
+                try:
+                    review_input = await qa_evidence.render_qa_evidence(args["qa_evidence"])
+                except ValueError as exc:
+                    return _err(400, str(exc))
+            elif "input" in args:
+                review_input = args["input"]
+            else:
+                return _err(400, "input or qa_evidence is required")
+            body["input"] = {"input": review_input}
             r = await c.post(f"{BASE}{path}", json=body)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "run_workflow_async":

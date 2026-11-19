@@ -1,0 +1,211 @@
+import asyncio
+import json
+
+import httpx
+import pytest
+
+from agents_platform_runners_app import mcp_server, qa_evidence
+
+
+LOOKUP = {}
+
+
+@pytest.fixture
+def evidence():
+    return {
+        "version": 1,
+        "revision": {"repo": "owner/repo", "pr": 7, "merged_sha": "a" * 40},
+        "scope": {"summary": "Review the existing output"},
+        "checks": [{"id": "1", "text": "Run the smoke check", "result": {"observed": "exit 0"}}],
+        "evidence_refs": ["https://example.com/log", "artifact:qa/proof.png"],
+        "known_gaps": [],
+    }
+
+
+@pytest.fixture
+def outbound(monkeypatch):
+    calls = []
+
+    def handler(request):
+        if request.url.path == qa_evidence.LOOKUP_ROUTE:
+            return LOOKUP["handler"](request)
+        calls.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"run_id": "test-run"})
+
+    client = httpx.AsyncClient
+    monkeypatch.setattr(
+        mcp_server.httpx, "AsyncClient",
+        lambda **kwargs: client(**{**kwargs, "transport": httpx.MockTransport(handler)}),
+    )
+    monkeypatch.setattr(mcp_server, "_caller_run_id", lambda _: "caller")
+    return calls
+
+
+def _dispatch(**kwargs):
+    return json.loads(asyncio.run(mcp_server._call_tool(
+        "run_agent_async", {"target_slug": "test-target", **kwargs},
+    ))[0].text)
+
+
+def test_structured_dispatch_uses_same_block_and_preserves_routing(monkeypatch, evidence, outbound):
+    checked = []
+
+    async def verify(revision):
+        checked.append(revision)
+
+    monkeypatch.setattr(qa_evidence, "_verify_merged_revision", verify)
+    assert _dispatch(slug="qa", qa_evidence=evidence, input="duplicated prose")["run_id"]
+    assert _dispatch(
+        group_slug="qas", qa_evidence=evidence, notion_task_id="fixture-card",
+        call_me_back=False, qa_rerun=True,
+    )["run_id"]
+    direct, group = outbound
+    assert direct[0] == "/api/agents/qa/run"
+    assert group[0] == "/api/agent-groups/qas/run"
+    assert direct[1]["input"] == group[1]["input"]
+    payload = direct[1]["input"]["input"]
+    assert json.loads(payload.split("\n", 1)[1]) == evidence
+    assert "duplicated prose" not in payload
+    assert "notion_task_id" not in direct[1]
+    assert group[1]["notion_task_id"] == "fixture-card"
+    assert group[1]["qa_rerun"] is True
+    assert direct[1]["call_me_back"] is True and group[1]["call_me_back"] is False
+    assert direct[1]["caller_run_id"] == group[1]["caller_run_id"] == "caller"
+    assert checked == [evidence["revision"]] * 2
+
+
+def test_invalid_evidence_is_rejected_before_dispatch(evidence, outbound):
+    evidence["evidence_refs"] = ["file:///private/file"]
+    assert _dispatch(slug="qa", qa_evidence=evidence)["status"] == 400
+    assert _dispatch(slug="qa", qa_evidence=None)["status"] == 400
+    assert _dispatch(slug="coder", qa_evidence=evidence)["status"] == 400
+    assert outbound == []
+
+
+def _workspace_api(monkeypatch, handler):
+    """Route the evidence verifier's workspace-API call to `handler`; the
+    gateway child has no `gh`, so a subprocess here is a regression."""
+    async def no_gh(*args, **kwargs):
+        raise FileNotFoundError("gh")
+
+    monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", no_gh)
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
+    LOOKUP["handler"] = handler
+
+
+def test_pre_merge_evidence_fails_closed(monkeypatch, evidence, outbound):
+    _workspace_api(monkeypatch, lambda r: httpx.Response(200, json={"state": "OPEN", "merge_sha": None}))
+    result = _dispatch(slug="qa", qa_evidence=evidence)
+    assert result["status"] == 400
+    assert "must be merged" in result["message"]
+    assert outbound == []
+
+
+def test_code_dispatch_succeeds_without_gh_in_gateway(monkeypatch, evidence, outbound):
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers["x-api-key"], json.loads(request.content)))
+        return httpx.Response(200, json={"state": "MERGED", "merge_sha": "a" * 40})
+
+    _workspace_api(monkeypatch, handler)
+    assert _dispatch(slug="qa", qa_evidence=evidence)["run_id"]
+    assert seen == [(qa_evidence.LOOKUP_ROUTE, "k", {"repo": "owner/repo", "pr": 7})]
+    assert outbound[0][0] == "/api/agents/qa/run"
+
+
+def test_lookup_failure_fails_closed(monkeypatch, evidence, outbound):
+    _workspace_api(monkeypatch, lambda r: httpx.Response(502, json={"detail": "x"}))
+    assert _dispatch(slug="qa", qa_evidence=evidence)["status"] == 400
+    assert outbound == []
+
+
+def test_route_runs_gh_where_it_exists(monkeypatch):
+    from fastapi.testclient import TestClient
+    from agents_platform_runners_app.routes import build_routes
+
+    class Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"state":"MERGED","mergeCommit":{"oid":"' + b"b" * 40 + b'"}}', None
+
+    async def gh(*args, **kwargs):
+        assert args[:3] == ("gh", "pr", "view") and "owner/repo" in args
+        return Proc()
+
+    monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", gh)
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
+    client = TestClient(build_routes())
+    ok = {"x-api-key": "k"}
+    r = client.post("/qa-evidence/pr", json={"repo": "owner/repo", "pr": 7}, headers=ok)
+    assert r.json() == {"state": "MERGED", "merge_sha": "b" * 40}
+    assert client.post("/qa-evidence/pr", json={"repo": "o/r", "pr": "7"}, headers=ok).status_code == 400
+
+
+def test_route_rejects_unauthenticated_callers_before_touching_gh(monkeypatch):
+    from fastapi.testclient import TestClient
+    from agents_platform_runners_app.routes import build_routes
+
+    async def gh(*args, **kwargs):
+        raise AssertionError("gh must not run for an unauthenticated caller")
+
+    monkeypatch.setattr(qa_evidence.asyncio, "create_subprocess_exec", gh)
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
+    client = TestClient(build_routes())
+    body = {"repo": "owner/repo", "pr": 7}
+    assert client.post("/qa-evidence/pr", json=body).status_code == 401
+    assert client.post("/qa-evidence/pr", json=body, headers={"x-api-key": "bad"}).status_code == 401
+    monkeypatch.delenv("AW_WORKSPACE_API_KEY")
+    monkeypatch.setattr(qa_evidence.kanban_dispatch if hasattr(qa_evidence, "kanban_dispatch") else __import__("agents_platform_runners_app.kanban_dispatch", fromlist=["x"]), "_from_env_file", lambda n: None)
+    assert client.post("/qa-evidence/pr", json=body, headers={"x-api-key": "k"}).status_code == 503
+
+
+def test_legacy_text_still_dispatches(outbound):
+    assert _dispatch(slug="qa", input="legacy")["run_id"]
+    assert outbound[0][1]["input"] == {"input": "legacy"}
+
+
+def test_deploy_followup_uses_renderer_and_retains_rerun(monkeypatch, evidence, outbound):
+    evidence["revision"] = {"artifact_revision": "release-v1"}
+    row = {
+        "page_id": "fixture-deploy-card", "target_slug": "test-target",
+        "qa_dispatch_needed": True, "qa_evidence": evidence,
+    }
+    stamps = []
+    monkeypatch.setattr(mcp_server.deploy_reconcile, "mark_qa_dispatched",
+                        lambda _, page_id: stamps.append(page_id))
+
+    async def run():
+        async with httpx.AsyncClient() as client:
+            await mcp_server._deploy_followups(client, None, {"moved": [row]})
+
+    asyncio.run(run())
+    assert stamps == ["fixture-deploy-card"]
+    assert outbound[0][0] == "/api/agent-groups/qas/run"
+    assert outbound[0][1]["qa_rerun"] is True
+    assert outbound[0][1]["input"]["input"] == asyncio.run(qa_evidence.render_qa_evidence(evidence))
+
+
+def test_reconciled_deploy_card_dispatches_stamped_evidence(monkeypatch, outbound):
+    """Producer -> reconcile row -> QA dispatch, no hand-built row."""
+    from agents_platform_runners_app import deploy_reconcile as dr
+    from tests.test_deploy_reconcile import FakeBoard, _card, _patch_observe
+
+    evidence = {
+        "version": 1, "revision": {"artifact_revision": "release-v1"},
+        "scope": {"summary": "Verify"}, "evidence_refs": [], "known_gaps": [],
+        "checks": [{"id": "1", "text": "Smoke", "result": "unchecked"}],
+    }
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+    board = FakeBoard({"p1": _card(DeployCheckResult=json.dumps({"qa_evidence": evidence}))})
+    result = dr.check_deployed(board, max_cards=10)
+
+    async def run():
+        async with httpx.AsyncClient() as client:
+            await mcp_server._deploy_followups(client, board, result)
+
+    asyncio.run(run())
+    sent = outbound[0][1]["input"]["input"]
+    assert sent.startswith("QA handoff v1") and json.loads(sent.split("\n", 1)[1]) == evidence
+    assert outbound[0][1]["qa_rerun"] is True

@@ -791,6 +791,15 @@ def test_mobile_rework_reconciles_timeout_and_replays_against_sweeper():
     asyncio.run(scenario())
 
 
+def test_coder_uses_direct_qa_dispatch_instead_of_board_handoff():
+    board = HandoffBoard()
+    platform = HandoffPlatform("coder")
+    with pytest.raises(ValueError, match="Only the card's QA or Architect"):
+        asyncio.run(_handoff(board, platform))
+    assert not platform.dispatched
+    assert not board.writes
+
+
 def test_architect_handoff_resolves_default_coder():
     board = HandoffBoard(agent_slug="architect")
     platform = HandoffPlatform("architect")

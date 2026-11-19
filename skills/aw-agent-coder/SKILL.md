@@ -295,6 +295,17 @@ rollout, costing ~13M tokens between them.
   QA", and that is the first point at which there is a merged change to
   review. On a direct-push repo, hand off only after push **and** deploy, per
   the Definition of Done above.
+- After verifying the merge and required release, send QA one
+  `qa_evidence` object via `run_agent_async` using the existing card,
+  target and callback arguments. Use the `qas` group or explicit QA agent.
+  Set `version=1`, and provide `revision={repo, pr, merged_sha}` with the
+  full merge SHA for code, or `revision={artifact_revision}` for other
+  work. Provide `scope={reference}` for a card or `scope={summary}` for
+  cardless work. List `checks` as `{id, text, result}`, where `result`
+  is `{observed: "..."}` or `"unchecked"`. Include `evidence_refs`
+  (HTTPS links or `artifact:relative/path`) and `known_gaps`, even when
+  empty. Leave card history and duplicate prose out of the handoff.
+  Record the dispatch receipt and let QA verify the claims independently.
 - **`run_agent_async` on a `qa-*` agent can come back 409.** That means the
   server found a QA run for this card/target already — either still in
   flight, or already finished with a verdict — and the error names it.

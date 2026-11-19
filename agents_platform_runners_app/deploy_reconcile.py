@@ -526,6 +526,7 @@ def _evaluate_card(board: "kanban_dispatch.BoardClient", summary: dict, *,
                   qa_dispatch_needed=(qa_status.strip().lower() != "done" and not qa_dispatched))
         row["_stamp"] = {"verdict": "no_deploy_needed", "unknown_streak": 0,
                          "invalid_commented": False, "qa_dispatched": qa_dispatched}
+        _carry_qa_evidence(prior, row)
         row["_qa_status"] = qa_status
         row["_streak"] = 0
         return row
@@ -542,6 +543,10 @@ def _evaluate_card(board: "kanban_dispatch.BoardClient", summary: dict, *,
         # confirmed success.
         row["_stamp"] = {"verdict": "invalid", "invalid_commented": row["already_reported"],
                          "unknown_streak": 0}
+        # Keep producer evidence across a temporarily invalid card, so it is
+        # still there once the deployment metadata is corrected.
+        if isinstance(prior.get("qa_evidence"), dict):
+            row["_stamp"]["qa_evidence"] = prior["qa_evidence"]
         return row
 
     klass, name = parse_component(component)
@@ -600,13 +605,48 @@ def _evaluate_card(board: "kanban_dispatch.BoardClient", summary: dict, *,
               reminder_action=reminder_action)
     row["_stamp"] = {"verdict": verdict, "unknown_streak": streak,
                      "invalid_commented": False, "qa_dispatched": qa_dispatched}
+    _carry_qa_evidence(prior, row)
     row["_qa_status"] = qa_status
     row["_streak"] = streak
     return row
 
 
+def _carry_qa_evidence(prior: dict, row: dict) -> None:
+    """Hand a producer-supplied ``qa_evidence`` object (written onto this
+    card's own ``DeployCheckResult`` after merge verification) to the QA
+    dispatch, and keep it in the stamp ``_stamp`` rewrites whole. Absent or
+    non-object -> nothing is carried and QA gets the legacy text; evidence is
+    never synthesised from deploy metadata."""
+    evidence = prior.get("qa_evidence")
+    if isinstance(evidence, dict):
+        row["qa_evidence"] = evidence
+        row["_stamp"]["qa_evidence"] = evidence
+
+
+# Notion's rich_text property writer silently cuts a value to 2000 chars,
+# which turns the stamp into unparseable JSON (and reconcile reads that as an
+# empty stamp). Never write past it.
+PROPERTY_LIMIT = 2000
+
+
 def _stamp(board: "kanban_dispatch.BoardClient", page_id: str, stamp: dict) -> None:
     import datetime as _dt
+    if len(json.dumps(stamp)) > PROPERTY_LIMIT and "qa_evidence" in stamp:
+        # Evidence that does not fit is dropped whole (QA gets the legacy
+        # text) rather than corrupting the stamp's own verdict fields.
+        log.warning("deploy_reconcile: qa_evidence for %s exceeds the %d-char property "
+                    "limit; not stored", page_id, PROPERTY_LIMIT)
+        stamp = {k: v for k, v in stamp.items() if k != "qa_evidence"}
+        try:
+            board.add_comment(
+                page_id,
+                f"QA evidence was NOT stored: the stamped qa_evidence makes DeployCheckResult "
+                f"exceed Notion's {PROPERTY_LIMIT}-character property limit, which would silently "
+                "corrupt it. QA will receive the legacy handoff text. Re-stamp a smaller "
+                "qa_evidence (fewer/shorter checks, refs and gaps) or send it directly with "
+                "run_agent_async(qa_evidence=...) after merge.")
+        except Exception:  # noqa: BLE001 - the loud path must not break the stamp write
+            log.warning("deploy_reconcile: could not comment the over-limit evidence on %s", page_id)
     board.set_property(page_id, "DeployCheckResult", json.dumps(stamp))
     board.set_property(page_id, "LastDeployCheckAt",
                        _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d"))

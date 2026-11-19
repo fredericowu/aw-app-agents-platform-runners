@@ -991,3 +991,69 @@ def test_mark_reminder_sent_writes_the_real_property_not_the_json_blob():
     board = FakeBoard({"p1": _card()})
     dr.mark_reminder_sent(board, "p1", "2026-11-12T19:00:00+00:00")
     assert board.writes == [("p1", "LastDeployReminderAt", "2026-11-12T19:00:00+00:00")]
+
+
+# ── producer-supplied QA evidence reaches the dispatch row ──────────────
+
+_EVIDENCE = {
+    "version": 1,
+    "revision": {"artifact_revision": "release-v0.35.1"},
+    "scope": {"summary": "Verify the shipped change"},
+    "checks": [{"id": "1", "text": "Smoke check", "result": "unchecked"}],
+    "evidence_refs": [],
+    "known_gaps": [],
+}
+
+
+def test_stamped_qa_evidence_reaches_row_and_survives_restamp(monkeypatch):
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+    board = FakeBoard({"p1": _card(DeployCheckResult=json.dumps({"qa_evidence": _EVIDENCE}))})
+    row = dr.check_deployed(board, max_cards=10)["moved"][0]
+    assert row["qa_evidence"] == _EVIDENCE
+    # _stamp rewrites the blob whole; the evidence must not be dropped by it.
+    assert json.loads(board._cards["p1"]["DeployCheckResult"])["qa_evidence"] == _EVIDENCE
+
+
+def test_no_stamped_evidence_means_legacy_row(monkeypatch):
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+    board = FakeBoard({"p1": _card(DeployCheckResult=json.dumps({"qa_evidence": "junk"}))})
+    row = dr.check_deployed(board, max_cards=10)["moved"][0]
+    assert "qa_evidence" not in row
+
+
+def test_none_sentinel_row_carries_evidence(monkeypatch):
+    board = FakeBoard({"p1": _card(DeployComponent="none", DeployToVersion="",
+                                   DeployCheckResult=json.dumps({"qa_evidence": _EVIDENCE}))})
+    rows = dr.check_deployed(board, max_cards=10)
+    row = (rows["moved"] + rows["still_waiting"])[0]
+    assert row["qa_evidence"] == _EVIDENCE
+
+
+def test_invalid_card_keeps_stamped_evidence_until_metadata_is_fixed(monkeypatch):
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+    board = FakeBoard({"p1": _card(DeployComponent="", DeployCheckResult=json.dumps({"qa_evidence": _EVIDENCE}))})
+    dr.check_deployed(board, max_cards=10)
+    assert json.loads(board._cards["p1"]["DeployCheckResult"])["qa_evidence"] == _EVIDENCE
+    board._cards["p1"]["DeployComponent"] = "app:notion"
+    row = dr.check_deployed(board, max_cards=10)["moved"][0]
+    assert row["qa_evidence"] == _EVIDENCE
+
+
+def test_oversized_evidence_never_corrupts_the_stamp_at_the_property_limit(monkeypatch):
+    """The real property writer cuts at 2000 chars; model it."""
+    _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
+
+    class CuttingBoard(FakeBoard):
+        def set_property(self, page_id, name, value):
+            return super().set_property(page_id, name, value[:dr.PROPERTY_LIMIT]
+                                        if isinstance(value, str) else value)
+
+    big = {**_EVIDENCE, "known_gaps": ["g" * 390] * 8}
+    board = CuttingBoard({"p1": _card(DeployCheckResult=json.dumps({"qa_evidence": big}))})
+    row = dr.check_deployed(board, max_cards=10)["moved"][0]
+    stored = json.loads(board._cards["p1"]["DeployCheckResult"])  # still valid JSON
+    assert stored["verdict"] == "deployed" and "qa_evidence" not in stored
+    assert row["qa_evidence"] == big  # this pass still dispatches it
+    # loud, not silent: a card comment names the problem and the way out
+    assert any("NOT stored" in text and "run_agent_async(qa_evidence" in text
+               for pid, text in board.comments if pid == "p1")
