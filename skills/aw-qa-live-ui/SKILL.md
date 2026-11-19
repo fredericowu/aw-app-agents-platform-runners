@@ -40,5 +40,6 @@ a bug in the deployed code, and reporting it as one sends a coder to fix
 nothing.
 
 Exercise the interaction with Playwright and capture screenshot evidence
-showing its result. Attach the screenshot to the card when present and cite
+showing its result. Write the screenshot directly to a shared file or
+artifact and retain its path and metadata. Attach the screenshot to the card when present and cite
 it in the verdict. Use an artifact reference in cardless reports.

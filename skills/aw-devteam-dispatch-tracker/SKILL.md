@@ -75,7 +75,7 @@ This is the live version, run the moment the request lands.
    `call_me_back`-anywhere-in-the-chain wakeup already covers the whole
    chain once `mark_flow_done`/`mark_as_planned` fires — a redundant
    `supervise()` call is harmless but not required in that case. Check
-   `get_run_detail`'s `flow_run_id` before assuming you need to arm one.
+   the `flow_run_id` in `get_run_detail`'s default metadata before assuming you need to arm one.
 
 7. **When woken, read the card and act — don't stop at "I kicked it
    off."**

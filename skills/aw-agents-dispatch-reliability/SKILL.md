@@ -53,7 +53,8 @@ different failures produce a similar-looking dead run, and they call for
 opposite responses. Decide which one you're in **before** doing anything:
 
 ```
-get_run_detail(run_id=...)   # or run_events / get_run
+get_run_detail(run_id=...)   # metadata and usage only
+run_events(run_id=..., kinds=..., limit=20)   # focused trace
 ```
 
 | What the trace shows | What happened | What to do |
@@ -90,7 +91,7 @@ The dead run's own final self-report is never coming — it's dead. Its
 rescued over a thousand lines of committed work from a run that technically
 ended in `error`.
 
-1. `get_run_detail` / `run_events` on the dead `run_id` and walk the trace
+1. Use `run_events` on the dead `run_id` and walk a focused trace window
    up to the death point: which files were edited or committed, what a QA
    pass actually checked and concluded, what the last known-good state was.
 2. When you report upward, label it explicitly as **recovered provenance
@@ -183,7 +184,7 @@ system prompt with no introspection at all and invented plausible names
 rather than admitting it hadn't checked.
 
 Force a real tool call (have it actually invoke something from the surface
-in question) and check the trace (`get_run_detail`/`run_events`) for
+in question) and check the trace (`run_events` or an explicit `get_run_detail` event window) for
 genuine `tool_call` events backing the claim. No corresponding calls means
 unverified, however specific and confident it reads — fall back to
 mechanistic evidence instead, e.g. the gateway's own traffic logs for
