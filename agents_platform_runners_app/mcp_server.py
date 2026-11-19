@@ -1708,6 +1708,15 @@ async def _list_tools() -> list[Tool]:
                               "offset": {"type": "integer",
                                   "description": "Pagination offset, detailed mode only. Default 0."},
                           }}),
+        Tool(name="unretire_session",
+             description=("Reverse a dead-session retirement (self-healing): clears "
+                          "retired_at, retired_reason, successor_session_id and the heal "
+                          "attempt counter, so the next resume targets this session "
+                          "again. `list_sessions` rows show retired_at, retired_reason, "
+                          "successor_session_id and cli."),
+             inputSchema={"type": "object", "required": ["session_id"],
+                          "properties": {"session_id": {"type": "string",
+                              "description": "The retired session to bring back."}}}),
         Tool(name="list_bots",
              description=("Per-bot (per-agent) snapshot: for every agent/source_slug seen "
                           "in recent runs, its currently active session_id (the session_id "
@@ -1728,7 +1737,8 @@ async def _list_tools() -> list[Tool]:
                           "agent's SINGLE currently-active session), this returns the full "
                           "session HISTORY for an agent. Each row: session_id, name "
                           "(user-renamed label, if any), description, run_count, "
-                          "last_run_at, last_status.\n\n"
+                          "last_run_at, last_status, plus the self-heal fields retired_at, "
+                          "retired_reason, successor_session_id and cli.\n\n"
                           "Pass `source_slug` to scope to one agent/workflow (e.g. "
                           "'crispal-dev-sonnet') — only sessions with at least one run "
                           "from that slug are returned. Pass `q` to search session_id/"
@@ -3906,6 +3916,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                 if rr.status_code == 200:
                     row["runs"] = [{"run_id": rn["id"], "status": rn["status"]} for rn in rr.json()]
             return _ok(list(bots.values()))
+        if name == "unretire_session":
+            sid = (args.get("session_id") or "").strip()
+            if not sid:
+                return _err(400, "session_id is required")
+            r = await c.post(f"{BASE}/api/sessions/{sid}/unretire")
+            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "list_sessions":
             params = {"limit": str(args.get("limit") or 100)}
             if args.get("source_slug"):

@@ -668,6 +668,57 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
     def _ap_unreachable(what: str, exc: Exception) -> HTTPException:
         return HTTPException(502, f"{what}: could not reach agents-platform — {exc}")
 
+    @app.get("/session-heals/doctor")
+    async def session_heals_doctor() -> dict:
+        """``contributes.doctor`` entry for dead-session self-healing (card
+        41d5bf3b-9510-8160-89ad-f4293f36ccee). Reads AP-MT's heals summary over
+        this app's own identity. Red when, in the last 24h, any heal ended
+        ``heal_failed`` / ``capped`` / ``systemic``, or any session kept dying
+        with zero-token resumes (the symptom itself, even if nothing healed it).
+        Live sessions whose CLI no longer matches their agent are listed, not
+        red: the next resume heals them."""
+        try:
+            base, headers = _ap_target()
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get(f"{base}/api/sessions/heals/summary",
+                                        params={"hours": 24}, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except HTTPException as exc:
+            return {"ok": False, "detail": {"problems": [str(exc.detail)]}}
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"ok": False, "detail": {"problems": [
+                f"could not read the self-heal summary from agents-platform: {exc}"]}}
+        # A 200 is not proof: a proxy/old AP-MT can answer with any JSON. Without the
+        # summary's required fields the check has seen NOTHING, which is not green.
+        if (not isinstance(data, dict) or not isinstance(data.get("counts"), dict)
+                or not isinstance(data.get("total"), int) or isinstance(data.get("total"), bool)
+                or not isinstance(data.get("zero_token_resume_failures"), list)
+                or not isinstance(data.get("cli_mismatched_sessions", []), list)):
+            return {"ok": False, "detail": {"problems": [
+                "agents-platform answered /api/sessions/heals/summary with an unexpected "
+                "shape (need an object with counts, total, zero_token_resume_failures) — "
+                "an AP-MT that predates the self-heal P3 summary has no zero-token "
+                "diagnostics, so this check cannot vouch for it; degraded, not healthy"],
+                "got": str(data)[:200]}}
+        counts = data["counts"]
+        problems = []
+        for outcome in ("heal_failed", "capped", "systemic"):
+            if counts.get(outcome):
+                problems.append(f"{counts[outcome]} self-heal(s) ended {outcome} in the last 24h")
+        zero = data.get("zero_token_resume_failures") or []
+        if any(not isinstance(z, dict) or not z.get("session_id") for z in zero):
+            return {"ok": False, "detail": {"problems": [
+                "zero_token_resume_failures entries are malformed (need session_id)"]}}
+        if zero:
+            problems.append(f"{len(zero)} session(s) with 3+ zero-token resume failures in 24h: "
+                            + ", ".join(z["session_id"][:8] for z in zero[:5]))
+        return {"ok": not problems, "detail": {
+            "heals_24h": counts, "total": data.get("total", 0),
+            "zero_token_resume_failures": zero,
+            "cli_mismatched_sessions": data.get("cli_mismatched_sessions") or [],
+            "problems": problems}}
+
     @app.post("/gallery/upload")
     async def gallery_upload(bot_slug: str = Form(...), source: str = Form("agent"),
                              files: list[UploadFile] = File(...)) -> dict:
