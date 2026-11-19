@@ -756,6 +756,7 @@ class HandoffPlatform(FakePlatform):
         await super().dispatch(path, payload)
         self.runs.insert(0, {"id": "run-1", "source_slug": path.split("/")[3],
                              "workspace": payload["workspace"], "status": "pending",
+                             "parent_run_id": payload["caller_run_id"],
                              "target_slug": payload["target_slug"], "input": payload["input"]})
         return ("", "timeout", False) if self.ambiguous else ("run-1", "", False)
 

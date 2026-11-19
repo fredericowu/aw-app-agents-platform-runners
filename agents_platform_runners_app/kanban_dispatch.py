@@ -665,6 +665,7 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
         def recipient(rows: list[dict]) -> dict | None:
             return next((r for r in rows if r.get("target_slug") == target
                          and r.get("workspace") == _this_workspace()
+                         and r.get("parent_run_id")
                          and ((r.get("input") or {}).get("input") or "").startswith(marker + "\n")), None)
 
         def result(run: dict, *, reused: bool) -> dict:
@@ -713,6 +714,7 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
                     f"Revision: {revision}\nSource run: {source_id}\n\n{evidence.strip()}")
         path, payload = dispatch_payload(card, f"{findings}\n\n{build_run_input(card)}",
                                          default_coder=default_coder)
+        payload["caller_run_id"] = source_id
         if not await asyncio.to_thread(claim_card, board, page_id, token=token):
             return {"ok": False, "reason": "claim-lost"}
         try:
