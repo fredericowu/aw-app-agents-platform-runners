@@ -754,6 +754,33 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
             raise _ap_unreachable("run-initiator lookup", exc) from exc
         return _ap_answer(resp, "run-initiator lookup")
 
+    @app.post("/github/aw-run-pr-nudge")
+    async def github_aw_run_pr_nudge(request: Request, body: dict = Body(...)) -> dict:
+        """Thin proxy for AP-MT's `POST /api/github/aw-run-pr-nudge` — the
+        chain-idle wake for PRs tagged ``aw-run:<run id>``. All policy lives in
+        AP-MT; aw-app-git reaches it through here because an app cannot read
+        another app's AP-MT credentials. It WAKES agents, so it is gated on
+        X-Api-Key exactly like `/qa-evidence/pr` (the standalone mount has no
+        IdentityGuard)."""
+        expected = os.environ.get("AW_WORKSPACE_API_KEY") or kanban_dispatch._from_env_file("AW_WORKSPACE_API_KEY")
+        if not expected:
+            raise HTTPException(503, "AW_WORKSPACE_API_KEY is not set; PR nudge is unavailable")
+        # bytes, not str: compare_digest raises TypeError on a non-ASCII str,
+        # which would turn a bad header into a 500 instead of a 401.
+        if not hmac.compare_digest(request.headers.get("x-api-key", "").encode(), expected.encode()):
+            raise HTTPException(401, "invalid or missing X-Api-Key")
+        base, headers = _ap_target()
+        try:
+            # 15s: aw-app-git's caller allows 17s, so this proxy always gives up
+            # first and the caller never reports a transport failure for a nudge
+            # that completes (the wake may already have been dispatched).
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(f"{base}/api/github/aw-run-pr-nudge",
+                                         json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise _ap_unreachable("aw-run PR nudge", exc) from exc
+        return _ap_answer(resp, "aw-run PR nudge")
+
     @app.post("/telegram/inject")
     async def telegram_inject(body: dict = Body(...)) -> dict:
         """Proxy for AP-MT's `POST /api/telegram/inject` — put a synthetic
