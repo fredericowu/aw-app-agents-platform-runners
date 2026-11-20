@@ -1650,7 +1650,9 @@ async def _list_tools() -> list[Tool]:
                                          "notion_task_id": {"type": "string",
                                                              "description": "Filter to runs linked to this Notion Kanban page id only."},
                                          "category": {"type": "string",
-                                                      "description": "Filter by Run.category: 'work' (real agent/workflow dispatches) or 'monitor' (shell-wrapper dispatches like monitor-shell). Omit for no filter."}}}),
+                                                      "description": "Filter by Run.category: 'work' (real agent/workflow dispatches) or 'monitor' (shell-wrapper dispatches like monitor-shell). Omit for no filter."},
+                                         "flow_needs_human": {"type": "boolean",
+                                                              "description": "Server-side filter on Run.flow_needs_human (true = only runs whose Agents Flow escalated to a human). Omit for no filter."}}}),
         Tool(name="get_run_detail",
              description=("Bounded run metadata and persisted usage. No events are "
                           "fetched by default. Set full_record=true for complete "
@@ -1828,6 +1830,21 @@ async def _list_tools() -> list[Tool]:
              inputSchema={"type": "object",
                           "properties": {"slug": {"type": "string"}},
                           "required": ["slug"]}),
+        Tool(name="plan_iteration_ledger",
+             description=("Read-only per-card ledger for one workflow-mode Plan "
+                          "iteration (e.g. a Kanban Sweep pass). Rows = gate "
+                          "candidates plus runs whose callback the iteration's "
+                          "Manager registered, each with linked run ids and live "
+                          "status, callback delivered/pending, a Manager-declared "
+                          "action/why (when written) and a derived disposition: "
+                          "pending|terminal|skipped|unaccounted|mismatch. Also "
+                          "returns outstanding, scanned and beyond_window. Live: "
+                          "keeps changing after the iteration closed. "
+                          "`card_status_read=false` means card Status was not read."),
+             inputSchema={"type": "object",
+                          "properties": {"slug": {"type": "string"},
+                                         "iteration_id": {"type": "string"}},
+                          "required": ["slug", "iteration_id"]}),
         Tool(name="list_plan_iterations",
              description=("A Plan's iteration history, newest first — what each "
                           "previous cadence tick decided and why. Includes the "
@@ -3827,6 +3844,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                 params["notion_task_id"] = args["notion_task_id"]
             if args.get("category"):
                 params["category"] = args["category"]
+            if isinstance(args.get("flow_needs_human"), bool):
+                params["flow_needs_human"] = "true" if args["flow_needs_human"] else "false"
             r = await c.get(f"{BASE}/api/runs", params=params)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "get_run_detail":
@@ -4177,6 +4196,9 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "plan_summary":
             r = await c.get(f"{BASE}/api/plans/{args['slug']}/summary")
+            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+        if name == "plan_iteration_ledger":
+            r = await c.get(f"{BASE}/api/plans/{args['slug']}/iterations/{args['iteration_id']}/ledger")
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "list_plan_iterations":
             params = {}
