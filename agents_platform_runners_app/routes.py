@@ -771,7 +771,10 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
             raise HTTPException(401, "invalid or missing X-Api-Key")
         base, headers = _ap_target()
         try:
-            async with httpx.AsyncClient(timeout=25) as client:
+            # 15s: aw-app-git's caller allows 17s, so this proxy always gives up
+            # first and the caller never reports a transport failure for a nudge
+            # that completes (the wake may already have been dispatched).
+            async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(f"{base}/api/github/aw-run-pr-nudge",
                                          json=body, headers=headers)
         except httpx.HTTPError as exc:
