@@ -2725,7 +2725,7 @@ _RUN_SUMMARY_FIELDS = (
     "id", "kind", "category", "status", "target_slug", "target_id", "source_slug",
     "session_id", "notion_task_id", "workspace", "model_slug", "parent_run_id",
     "flow_run_id", "flow_slug", "flow_needs_human", "initiator_kind",
-    "started_at", "ended_at", "tokens_in", "tokens_out", "cost_usd", "error",
+    "started_at", "ended_at", "tokens_in", "tokens_out", "cost_usd", "error", "warning",
 )
 _INLINE_IMAGE = re.compile(
     r"(?:data:image/[^;,\s]+;base64,|iVBORw0KGgo|/9j/|UklGR|R0lGOD)"
