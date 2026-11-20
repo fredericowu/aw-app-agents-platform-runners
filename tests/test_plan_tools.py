@@ -135,6 +135,17 @@ def test_plan_iteration_ledger_reaches_its_endpoint(monkeypatch):
     assert req.url.path == "/api/plans/my-plan/iterations/it1/ledger"
 
 
+def test_annotate_plan_iteration_card_posts_only_its_body_fields(monkeypatch):
+    req = _call(monkeypatch, "annotate_plan_iteration_card",
+                {"slug": "my-plan", "iteration_id": "it1", "card": "c1",
+                 "action": "skipped", "expected_rev": 1, "junk": "x"},
+                payload={"item": {}})
+    assert req.method == "POST"
+    assert req.url.path == "/api/plans/my-plan/iterations/it1/annotations"
+    import json
+    assert json.loads(req.content) == {"card": "c1", "action": "skipped", "expected_rev": 1}
+
+
 def test_list_plans_reaches_the_collection_endpoint(monkeypatch):
     req = _call(monkeypatch, "list_plans", {}, payload=[])
     assert req.method == "GET"
