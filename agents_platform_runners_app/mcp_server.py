@@ -1056,6 +1056,10 @@ async def _list_tools() -> list[Tool]:
                                          "description": "Resume this specific run instead of the newest one tied to the card — e.g. "
                                                          "the newest non-qa work run the sweeper picked out by hand. Must belong to "
                                                          "this card's notion_task_id; a run tied to a different card is rejected (400)."},
+                              "call_me_back": {"type": "boolean", "default": True,
+                                               "description": "Wake the calling session when the resumed turn finishes (armed at creation, so it cannot race the run's own finalization). Default true; sent as false when there is no calling run and no call_me_back_on. Pass false for fire-and-forget."},
+                              "call_me_back_on": {"type": "string",
+                                                  "description": "Redirect the callback to this session id instead of the caller's own."},
                           },
                           "required": ["message"]}),
         Tool(name="register_callback",
@@ -3711,7 +3715,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                                      "resume. Dispatch one first (run_ready_cards, or move the card "
                                      "to Ready).")
                 run = runs[0]
-            planned = kanban_dispatch.resume_payload(run, page_id, message)
+            planned = kanban_dispatch.resume_payload(
+                run, page_id, message, caller_run_id=_caller_run_id(args),
+                call_me_back=args.get("call_me_back") is not False,
+                call_me_back_on=(args.get("call_me_back_on") or "").strip() or None)
             if isinstance(planned, str):
                 return _err(409, planned)
             path, payload = planned
@@ -3719,7 +3726,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             if resumed.status_code != 200:
                 return _err(resumed.status_code, resumed.text)
             return _ok({"page_id": page_id, "resumed_session": payload["session_id"],
-                        **resumed.json()})
+                        "call_me_back": payload["call_me_back"], **resumed.json()})
 
         if name == "register_callback":
             own_run_id = _caller_run_id(args)
