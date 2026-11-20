@@ -1845,6 +1845,25 @@ async def _list_tools() -> list[Tool]:
                           "properties": {"slug": {"type": "string"},
                                          "iteration_id": {"type": "string"}},
                           "required": ["slug", "iteration_id"]}),
+        Tool(name="annotate_plan_iteration_card",
+             description=("Write ONE Manager annotation (action/why/disposition) "
+                          "for ONE card in ONE Plan iteration (e.g. a Kanban Sweep "
+                          "pass or wake-up). Server-side read-modify-write: it "
+                          "touches only that card's item inside that iteration, so "
+                          "concurrent wake-ups keep each other's cards and a later "
+                          "sweep cannot rewrite an earlier iteration. Use INSTEAD of "
+                          "update_plan_memory for the kanban-sweeper ledger. Pass "
+                          "`expected_rev` (the item's `rev` you read; 0 = new) to "
+                          "get a 409 instead of overwriting a newer annotation."),
+             inputSchema={"type": "object",
+                          "properties": {"slug": {"type": "string"},
+                                         "iteration_id": {"type": "string"},
+                                         "card": {"type": "string"},
+                                         "action": {"type": "string"},
+                                         "why": {"type": "string"},
+                                         "disposition": {"type": "string"},
+                                         "expected_rev": {"type": "integer"}},
+                          "required": ["slug", "iteration_id", "card"]}),
         Tool(name="list_plan_iterations",
              description=("A Plan's iteration history, newest first — what each "
                           "previous cadence tick decided and why. Includes the "
@@ -4199,6 +4218,13 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "plan_iteration_ledger":
             r = await c.get(f"{BASE}/api/plans/{args['slug']}/iterations/{args['iteration_id']}/ledger")
+            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+        if name == "annotate_plan_iteration_card":
+            body = {k: v for k, v in args.items() if k in (
+                "card", "action", "why", "disposition", "expected_rev")}
+            r = await c.post(
+                f"{BASE}/api/plans/{args['slug']}/iterations/{args['iteration_id']}/annotations",
+                json=body)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "list_plan_iterations":
             params = {}
