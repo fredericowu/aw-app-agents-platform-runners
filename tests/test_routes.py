@@ -171,7 +171,7 @@ def test_aw_run_pr_nudge_is_api_key_gated_and_proxies_body(monkeypatch):
     assert client.post("/github/aw-run-pr-nudge", json=body,
                        headers={"x-api-key": "bad"}).status_code == 401
     assert client.post("/github/aw-run-pr-nudge", json=body,
-                       headers={"x-api-key": "k\u00e9"}).status_code == 401  # non-ASCII: 401, not 500
+                       headers={"x-api-key": "k\u00e9".encode("latin-1")}).status_code == 401  # non-ASCII: 401, not 500
     assert not seen
     resp = client.post("/github/aw-run-pr-nudge", json=body, headers={"x-api-key": "k"})
     assert resp.status_code == 200 and resp.json()["ok"] is True
