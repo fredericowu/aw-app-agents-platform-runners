@@ -124,3 +124,7 @@ def test_one_event_can_be_fetched_in_full(monkeypatch):
     run = json.loads(response)
     assert [e["id"] for e in run["events"]] == ["e1"]
     assert len(run["events"][0]["payload"]["text"]) == 20000
+
+
+def test_run_summary_fields_include_warning():
+    assert "warning" in mcp_server._RUN_SUMMARY_FIELDS
