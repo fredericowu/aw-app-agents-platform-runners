@@ -156,6 +156,35 @@ def test_run_initiator_keeps_ap_mts_404(monkeypatch):
     assert client.get("/runs/nope/initiator").status_code == 404
 
 
+def test_aw_run_pr_nudge_is_api_key_gated_and_proxies_body(monkeypatch):
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True, "verdicts": []})
+
+    client = _ap(monkeypatch, handler)
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
+    body = {"prs": [{"repo": "o/r", "number": 7, "run_id": "a" * 32}], "dry_run": True}
+    # It wakes agents: no key / wrong key never reaches AP-MT.
+    assert client.post("/github/aw-run-pr-nudge", json=body).status_code == 401
+    assert client.post("/github/aw-run-pr-nudge", json=body,
+                       headers={"x-api-key": "bad"}).status_code == 401
+    assert not seen
+    resp = client.post("/github/aw-run-pr-nudge", json=body, headers={"x-api-key": "k"})
+    assert resp.status_code == 200 and resp.json()["ok"] is True
+    assert str(seen[0].url) == "http://ap-mt.test/api/github/aw-run-pr-nudge"
+    assert json.loads(seen[0].content) == body
+    assert seen[0].headers["authorization"] == "Bearer id-jwt-123"
+
+
+def test_aw_run_pr_nudge_surfaces_ap_mt_failure(monkeypatch):
+    client = _ap(monkeypatch, lambda r: httpx.Response(403, text="nope"))
+    monkeypatch.setenv("AW_WORKSPACE_API_KEY", "k")
+    resp = client.post("/github/aw-run-pr-nudge", json={"prs": []}, headers={"x-api-key": "k"})
+    assert resp.status_code == 403
+
+
 def test_telegram_inject_passes_the_body_through_untouched(monkeypatch):
     """AP-MT owns /inject's schema. A proxy that reshapes the body becomes a
     second thing to keep in sync with it."""
