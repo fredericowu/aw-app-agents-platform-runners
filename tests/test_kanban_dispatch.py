@@ -159,6 +159,7 @@ def test_resume_call_me_back_on_redirect_needs_no_caller_and_opt_out_wins():
     assert p["call_me_back"] is True and p["call_me_back_on"] == "sess-A"
     _, p = kd.resume_payload(run, "p", "x", callback_origin_run_id="r", call_me_back=False)
     assert p["call_me_back"] is False
+    assert "callback_origin_run_id" not in p  # opt-out sends no origin at all
 
 
 def test_a_run_with_no_session_explains_itself_instead_of_failing():

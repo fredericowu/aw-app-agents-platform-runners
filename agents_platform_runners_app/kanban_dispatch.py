@@ -386,12 +386,12 @@ def resume_payload(run: dict, page_id: str, message: str, *,
     # hence callback_origin_run_id, not caller_run_id. The endpoint rejects
     # call_me_back=true with neither an origin nor a redirect target (400),
     # so that case degrades to fire-and-forget.
-    if callback_origin_run_id:
+    armed = bool(call_me_back and (callback_origin_run_id or call_me_back_on))
+    if armed and callback_origin_run_id:
         payload["callback_origin_run_id"] = callback_origin_run_id
-    if call_me_back_on:
+    if armed and call_me_back_on:
         payload["call_me_back_on"] = call_me_back_on
-    payload["call_me_back"] = bool(
-        call_me_back and (callback_origin_run_id or call_me_back_on))
+    payload["call_me_back"] = armed
     return f"/api/agents/{agent_slug}/run", payload
 
 
