@@ -765,7 +765,9 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
         expected = os.environ.get("AW_WORKSPACE_API_KEY") or kanban_dispatch._from_env_file("AW_WORKSPACE_API_KEY")
         if not expected:
             raise HTTPException(503, "AW_WORKSPACE_API_KEY is not set; PR nudge is unavailable")
-        if not hmac.compare_digest(request.headers.get("x-api-key", ""), expected):
+        # bytes, not str: compare_digest raises TypeError on a non-ASCII str,
+        # which would turn a bad header into a 500 instead of a 401.
+        if not hmac.compare_digest(request.headers.get("x-api-key", "").encode(), expected.encode()):
             raise HTTPException(401, "invalid or missing X-Api-Key")
         base, headers = _ap_target()
         try:
