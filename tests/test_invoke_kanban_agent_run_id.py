@@ -134,3 +134,28 @@ def test_the_schema_actually_declares_run_id():
     prop = tool.inputSchema["properties"]["run_id"]
     assert prop["type"] == "string"
     assert "run_id" not in tool.inputSchema.get("required", [])
+
+
+def test_tool_forwards_caller_run_and_call_me_back_to_the_resume(monkeypatch):
+    """Card 41e5bf3b: the resume body carries callback_origin_run_id + call_me_back so
+    the run is created with the intent instead of losing a race to finalize."""
+    monkeypatch.setattr(mcp_server, "_caller_run_id", lambda args: "mgr-run")
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/api/runs/run-42":
+            return httpx.Response(200, json={
+                "id": "run-42", "notion_task_id": "page-1",
+                "source_slug": "coder-sonnet", "session_id": "sess-9", "category": "work"})
+        if request.method == "POST":
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json={"run_id": "new-run"})
+        raise AssertionError(request.url.path)
+
+    result = _call(monkeypatch, handler, page_id="page-1", message="m", run_id="run-42")
+    assert bodies[0]["callback_origin_run_id"] == "mgr-run" and "caller_run_id" not in bodies[0] and bodies[0]["call_me_back"] is True
+    assert result["call_me_back"] is True
+
+    monkeypatch.setattr(mcp_server, "_caller_run_id", lambda args: None)
+    result = _call(monkeypatch, handler, page_id="page-1", message="m", run_id="run-42")
+    assert bodies[1]["call_me_back"] is False and result["call_me_back"] is False
