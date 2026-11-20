@@ -143,8 +143,8 @@ def test_resume_also_names_this_workspace(monkeypatch):
 
 def test_resume_arms_the_callback_at_creation_when_a_caller_exists():
     _, payload = kd.resume_payload(
-        {"source_slug": "a", "session_id": "s"}, "page-1", "x", caller_run_id="mgr-run")
-    assert payload["caller_run_id"] == "mgr-run" and payload["call_me_back"] is True
+        {"source_slug": "a", "session_id": "s"}, "page-1", "x", callback_origin_run_id="mgr-run")
+    assert payload["callback_origin_run_id"] == "mgr-run" and "caller_run_id" not in payload and payload["call_me_back"] is True
 
 
 def test_resume_without_a_caller_sends_call_me_back_false_not_a_400():
@@ -157,7 +157,7 @@ def test_resume_call_me_back_on_redirect_needs_no_caller_and_opt_out_wins():
     run = {"source_slug": "a", "session_id": "s"}
     _, p = kd.resume_payload(run, "p", "x", call_me_back_on="sess-A")
     assert p["call_me_back"] is True and p["call_me_back_on"] == "sess-A"
-    _, p = kd.resume_payload(run, "p", "x", caller_run_id="r", call_me_back=False)
+    _, p = kd.resume_payload(run, "p", "x", callback_origin_run_id="r", call_me_back=False)
     assert p["call_me_back"] is False
 
 

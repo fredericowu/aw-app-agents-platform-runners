@@ -3716,7 +3716,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                                      "to Ready).")
                 run = runs[0]
             planned = kanban_dispatch.resume_payload(
-                run, page_id, message, caller_run_id=_caller_run_id(args),
+                run, page_id, message, callback_origin_run_id=_caller_run_id(args),
                 call_me_back=args.get("call_me_back") is not False,
                 call_me_back_on=(args.get("call_me_back_on") or "").strip() or None)
             if isinstance(planned, str):

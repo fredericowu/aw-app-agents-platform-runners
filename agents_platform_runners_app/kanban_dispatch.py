@@ -354,7 +354,7 @@ def dispatch_payload(card: dict, input_text: str, *, default_coder: str = "coder
 
 
 def resume_payload(run: dict, page_id: str, message: str, *,
-                   caller_run_id: str | None = None, call_me_back: bool = True,
+                   callback_origin_run_id: str | None = None, call_me_back: bool = True,
                    call_me_back_on: str | None = None) -> tuple[str, dict] | str:
     """``(path, body)`` to resume the card's session, or a string saying why
     it can't be resumed. A card whose last run has no session is a real,
@@ -381,13 +381,17 @@ def resume_payload(run: dict, page_id: str, message: str, *,
         payload["target_id"] = run["target_id"]
     # Carry the caller's call-me-back intent at creation so the resumed run
     # is never finalized before the callback is armed (card 41e5bf3b). The
-    # endpoint rejects call_me_back=true with neither a caller run nor a
-    # redirect target (400), so that case degrades to fire-and-forget.
-    if caller_run_id:
-        payload["caller_run_id"] = caller_run_id
+    # origin is NOT the run's parent: a resumed session is not a child of
+    # whoever nudged it (flow, cancel cascade and hop count stay the card's),
+    # hence callback_origin_run_id, not caller_run_id. The endpoint rejects
+    # call_me_back=true with neither an origin nor a redirect target (400),
+    # so that case degrades to fire-and-forget.
+    if callback_origin_run_id:
+        payload["callback_origin_run_id"] = callback_origin_run_id
     if call_me_back_on:
         payload["call_me_back_on"] = call_me_back_on
-    payload["call_me_back"] = bool(call_me_back and (caller_run_id or call_me_back_on))
+    payload["call_me_back"] = bool(
+        call_me_back and (callback_origin_run_id or call_me_back_on))
     return f"/api/agents/{agent_slug}/run", payload
 
 

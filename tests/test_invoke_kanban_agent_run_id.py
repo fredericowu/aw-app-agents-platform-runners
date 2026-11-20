@@ -137,7 +137,7 @@ def test_the_schema_actually_declares_run_id():
 
 
 def test_tool_forwards_caller_run_and_call_me_back_to_the_resume(monkeypatch):
-    """Card 41e5bf3b: the resume body carries caller_run_id + call_me_back so
+    """Card 41e5bf3b: the resume body carries callback_origin_run_id + call_me_back so
     the run is created with the intent instead of losing a race to finalize."""
     monkeypatch.setattr(mcp_server, "_caller_run_id", lambda args: "mgr-run")
     bodies: list[dict] = []
@@ -153,7 +153,7 @@ def test_tool_forwards_caller_run_and_call_me_back_to_the_resume(monkeypatch):
         raise AssertionError(request.url.path)
 
     result = _call(monkeypatch, handler, page_id="page-1", message="m", run_id="run-42")
-    assert bodies[0]["caller_run_id"] == "mgr-run" and bodies[0]["call_me_back"] is True
+    assert bodies[0]["callback_origin_run_id"] == "mgr-run" and "caller_run_id" not in bodies[0] and bodies[0]["call_me_back"] is True
     assert result["call_me_back"] is True
 
     monkeypatch.setattr(mcp_server, "_caller_run_id", lambda args: None)
