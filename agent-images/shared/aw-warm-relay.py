@@ -164,7 +164,15 @@ def main() -> int:
         except Exception as e:
             print(f"aw-warm-relay: quota report failed ({e})", file=sys.stderr)
         try:
-            r.xadd(stream_key, {"done": "1", "returncode": "0"}, maxlen=50_000, approximate=True)
+            # A persistent claude turn has no process exit. An errored turn
+            # (is_error=true) must NOT claim returncode 0: omit it so the
+            # consumer reports no exit_code instead of a false "0".
+            done = {"done": "1"}
+            if evt.get("is_error"):
+                done["is_error"] = "1"
+            else:
+                done["returncode"] = "0"
+            r.xadd(stream_key, done, maxlen=50_000, approximate=True)
             r.expire(stream_key, 86400)
             finalised.add(run_id)
         except Exception as e:

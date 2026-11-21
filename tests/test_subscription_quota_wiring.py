@@ -25,6 +25,6 @@ def test_warm_relays_publish_quota_before_done_sentinel():
     codex = (shared / "aw-warm-relay-codex.py").read_text()
 
     assert claude.index('["/usr/local/bin/aw-quota-report", "claude"]') < claude.index(
-        'r.xadd(stream_key, {"done": "1"')
+        'done = {"done": "1"}')
     assert codex.index('["/usr/local/bin/aw-quota-report", "codex"]') < codex.index(
         'r.xadd(stream_key, {"done": "1"')
