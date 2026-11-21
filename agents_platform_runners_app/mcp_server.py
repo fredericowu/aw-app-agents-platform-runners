@@ -650,6 +650,8 @@ async def _list_tools() -> list[Tool]:
                                                           "description": "Default true: when the dispatched run finishes, your own session gets woken up with its result and replies down your own channel automatically. Set false for pure fire-and-forget."},
                                          "call_me_back_on": {"type": ["string", "null"],
                                                              "description": "Optional session_id to redirect the callback to instead of your own session — e.g. a session_id returned by a prior run_agent_async call. That session's agent gets woken with this run's result instead of you."},
+                                         "flow_detached": {"type": "boolean", "default": False,
+                                                           "description": "Run this dispatch OUTSIDE Agents Flow (default false). The agent keeps its own config but gets no flow skill/context, no flow hop, no reprompt/escalation and is never bound to a Kanban card: combining it with notion_task_id is a 400, and a card you are running under is NOT inherited. Your own final message is the result; the agent must not call mark_flow_done. Not inherited by children it dispatches (pass it again). Later turns of a session that STARTED detached stay detached. Needs an AP-MT backend that knows the field; an older backend silently ignores it."},
                                          "qa_rerun": {"type": "boolean", "default": False,
                                                       "description": "Override the server-side QA dedup guard (see above), which otherwise 409s a second qa-* dispatch for the same card/target. Use it when new commits merged AFTER the prior verdict and the delivery genuinely needs re-verifying, or to run a deliberate second QA in parallel (e.g. a different model). Do NOT use it to retry a dispatch you think failed — a 409 means one already exists, so read that run instead."}},
                           "required": ["target_slug"],
@@ -1385,7 +1387,11 @@ async def _list_tools() -> list[Tool]:
                                              "slug": {"type": "string"},
                                              "input": {"type": "string"},
                                              "node_id": {"type": "string"},
+                                             "flow_detached": {"type": ["boolean", "null"],
+                                                               "description": "Per-item override of the top-level flow_detached default (null = use it)."},
                                          }, "required": ["slug"]}},
+                              "flow_detached": {"type": "boolean", "default": False,
+                                                "description": "Default for items that leave flow_detached unset: run them outside Agents Flow. See run_agent_async.flow_detached."},
                               "target_id": {"type": ["string", "null"]},
                               "target_slug": {"type": "string",
                                               "description": "Slug of the Target this fan-out is delivering against. REQUIRED."},
@@ -3395,6 +3401,9 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             # qa_rerun keeps the request body it has always had.
             if args.get("qa_rerun"):
                 body["qa_rerun"] = True
+            # Same rule: only sent when true, so existing requests are unchanged.
+            if args.get("flow_detached") is True:
+                body["flow_detached"] = True
             # This workspace's own runners app dispatching this run is, by
             # construction, FROM this workspace — tier 1 of the resolver,
             # never inference. setdefault: never clobber an explicit
