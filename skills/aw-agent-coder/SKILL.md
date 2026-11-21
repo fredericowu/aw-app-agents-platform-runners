@@ -187,11 +187,14 @@ case per review).
   `devteam:review-capped`). That round cap is legacy and label-based: a
   human `/aw-review` can reopen it. After it, STOP pushing and report to the
   caller or the card.
-- Separately, a hard paid-review ceiling (default 3 reviews per PR, counted
-  from the PR timeline) applies to everyone. Once it is reached, no push and
-  no `/aw-review` from anyone runs another review: each new head just gets a
-  failing `devteam/review-cap` status. STOP pushing and report to the caller
-  or the card; a human decides (merge, close, or raise `max_reviews`).
+- Separately, a hard paid-review ceiling (default `max_reviews` 3 per PR,
+  counted from the PR timeline) applies to everyone. Once it is reached, no
+  push and no `/aw-review` from anyone runs another review; each new head
+  gets a failing `devteam/review-cap` status. It fails open on a GitHub
+  timeline-read error (logged as a warning, the review still runs), so a
+  review after the ceiling is a platform fault to report, not a reopened
+  budget. STOP pushing and report to the caller or the card; a human decides
+  (merge, close, or raise `max_reviews`).
 - A push that gets no `devteam/code-review` status is not "nobody looked
   yet" to be fixed by commenting: check `gh run list` for the review run,
   and report a missing one rather than forcing it.
