@@ -140,3 +140,24 @@ def test_stdout_is_still_relayed_for_continuations(monkeypatch, tmp_path):
     fake = _run_relay(monkeypatch, tmp_path, lines, ["run-a", "run-a"])
     assert len(fake.adds) == 2
     assert all("line" in f for _k, f in fake.adds)
+
+
+def _done_fields(fake):
+    return [f for _k, f in fake.adds if "done" in f]
+
+
+def test_error_result_does_not_claim_returncode_zero(monkeypatch, tmp_path):
+    """is_error result (e.g. error_during_execution on a missing session) has
+    no process exit; the done frame must not carry returncode=0."""
+    line = json.dumps({"type": "result", "subtype": "error_during_execution",
+                       "is_error": True, "errors": ["No conversation found"]})
+    fake = _run_relay(monkeypatch, tmp_path, [line], ["run-a"])
+    (done,) = _done_fields(fake)
+    assert "returncode" not in done
+    assert done["is_error"] == "1"
+
+
+def test_success_result_keeps_returncode_zero(monkeypatch, tmp_path):
+    fake = _run_relay(monkeypatch, tmp_path, [_result()], ["run-a"])
+    (done,) = _done_fields(fake)
+    assert done["returncode"] == "0"
