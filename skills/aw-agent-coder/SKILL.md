@@ -174,8 +174,8 @@ hand. Point at the CI config you checked, not just the test output.
 
 **Review loop rules: never post `/aw-review` yourself.** A push to the PR
 branch already retriggers the review (the gate re-reviews fix-cycle pushes
-automatically). `/aw-review` is the human's manual override: a coder posting
-it after every push re-arms the review cap and produces an endless
+automatically). A coder posting `/aw-review` after every push re-arms the
+legacy round cap (`devteam:review-capped`) and produces an endless
 fix/review loop (aw-app-git PR #15: 7 commits in 20 minutes, one new edge
 case per review).
 
@@ -184,8 +184,17 @@ case per review).
   speculative findings with a "Won't do:" reply.
 - The review has a round cap: round 1, round 2, then one final automatic
   re-review once the PR carries `devteam:needs-human` (stamped
-  `devteam:review-capped`). After the cap, STOP pushing and report to the
-  caller or the card; only a human `/aw-review` reopens it.
+  `devteam:review-capped`). That round cap is legacy and label-based: a
+  human `/aw-review` can reopen it. After it, STOP pushing and report to the
+  caller or the card.
+- Separately, a hard paid-review ceiling (default `max_reviews` 3 per PR,
+  counted from the PR timeline) applies to everyone. Once it is reached, no
+  push and no `/aw-review` from anyone runs another review; each new head
+  gets a failing `devteam/review-cap` status. It fails open on a GitHub
+  timeline-read error (logged as a warning, the review still runs), so a
+  review after the ceiling is a platform fault to report, not a reopened
+  budget. STOP pushing and report to the caller or the card; a human decides
+  (merge, close, or raise `max_reviews`).
 - A push that gets no `devteam/code-review` status is not "nobody looked
   yet" to be fixed by commenting: check `gh run list` for the review run,
   and report a missing one rather than forcing it.
