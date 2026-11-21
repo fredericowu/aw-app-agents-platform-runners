@@ -59,3 +59,4 @@ ui/coverage/
 tmp/
 temp/
 *.log
+core.[0-9]*

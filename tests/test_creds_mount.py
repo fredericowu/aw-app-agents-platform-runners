@@ -342,9 +342,17 @@ def _run_cold_wrapper(tmp_path, monkeypatch, seed_text, *, existing=None, seed_p
     assert argv[:2] == ["sh", "-c"] and argv[3] == "sh"
     # replace aw-cli-with-quota claude ... with cat; keep the wrapper script as generated
     import resource
-    pre = (lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))) if fsize else None
+    import signal
+
+    def pre():
+        # no core files: RLIMIT_CORE=0, and ignore SIGXFSZ so an over-limit write
+        # returns EFBIG instead of killing the child (also covers piped core_pattern hosts)
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
+
     res = subprocess.run(["sh", "-c", argv[2], "sh", "cat"], input="PROMPT", text=True, capture_output=True,
-                         preexec_fn=pre,
+                         preexec_fn=pre if fsize else None,
                          env={"PATH": os.environ["PATH"], "HOME": str(cont_home), "AW_CLAUDE_JSON_SEED": str(seed)})
     return cont_home, res
 
