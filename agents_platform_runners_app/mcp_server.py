@@ -3933,7 +3933,18 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             if isinstance(args.get("exclude_agents"), str):
                 params["exclude_agents"] = args["exclude_agents"].strip()
             r = await c.get(f"{BASE}/api/runs/cost-analytics", params=params)
-            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+            if r.status_code != 200:
+                return _err(r.status_code, r.text)
+            body = r.json()
+            if params.get("facts_only") == "true":
+                # An AP-MT that predates dossier v1.1 ignores the unknown query
+                # parameter and answers 200 with the full dossier.
+                rows = body.get("cards") if isinstance(body, dict) and "cards" in body else [body]
+                if any(isinstance(x, dict) and ("runs" in x or "totals" in x) for x in rows or []):
+                    return _err(426, "facts_only is not supported by this Agents Platform "
+                                     "backend (it returned the full dossier); update AP-MT to "
+                                     "dossier v1.1 or call without facts_only.")
+            return _ok(body)
         if name == "list_runs":
             params = {"limit": str(args.get("limit") or 20), "summary": "true"}
             if args.get("status"):

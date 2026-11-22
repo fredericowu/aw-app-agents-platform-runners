@@ -159,3 +159,21 @@ def test_v11_params_forwarded_only_when_passed(monkeypatch):
                               "ci_since": "2026-11-22T10:00:00Z"}
     _call(monkeypatch, handler, {"filter_stale": True})
     assert seen["params"] == {"filter_stale": "true"}     # nothing new leaks to an older AP-MT
+
+
+@pytest.mark.parametrize("arguments", [
+    {"filter_stale": True, "facts_only": True},
+    {"card_id": "41b5bf3b-9510-8190-beeb-e2115e5be76f", "facts_only": True},
+])
+def test_facts_only_against_a_legacy_backend_is_an_upgrade_error(monkeypatch, arguments):
+    legacy = {"cards": [{"runs": [], "totals": {}}]} if arguments.get("filter_stale") \
+        else {"runs": [], "totals": {}}
+    out = _call(monkeypatch, lambda request: httpx.Response(200, json=legacy), arguments)
+    assert "426" in out[0].text and "update AP-MT" in out[0].text
+
+
+def test_facts_only_facts_payload_passes_through(monkeypatch):
+    facts = {"cards": [{"card": {}, "facts": {"open_pr": False}}]}
+    out = _call(monkeypatch, lambda request: httpx.Response(200, json=facts),
+                {"filter_stale": True, "facts_only": True})
+    assert _payload(out) == facts
