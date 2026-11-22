@@ -1410,22 +1410,51 @@ async def _list_tools() -> list[Tool]:
                           "properties": {"run_id": {"type": "string"}},
                           "required": ["run_id"]}),
         Tool(name="run_cost_analytics",
-             description=("Recursive cost analytics for exactly one card or run. Pass "
-                          "exactly one of `card_id` or `run_id`; passing both or neither "
-                          "is rejected before any HTTP request. Returns discovery roots "
-                          "and metadata, per-run and aggregate token/cost totals, per-tool "
-                          "call/error/miss groups with null token fields rather than "
-                          "fabricated attribution, and deterministically classified tool "
-                          "call misses. Unlike `run_tree`, card discovery can start from "
-                          "multiple seed runs and the response includes tool/miss and "
-                          "cost-completeness detail. Unlike `tool_usage_metrics`, this "
-                          "follows the recursive run graph and returns token/cost totals."),
+             description=("Recursive cost analytics and the card dossier for exactly one card or "
+                          "run. Pass exactly one of `card_id` or `run_id` (both or neither is "
+                          "rejected before any HTTP request), or set `filter_stale=true` with "
+                          "neither. Returns discovery roots and metadata (card runs are seeded "
+                          "from CreateRunId, UpdateRunIds and runs whose notion_task_id is the "
+                          "card), per-run and aggregate token/cost totals, per-tool call/error/miss "
+                          "groups with null token fields rather than fabricated attribution, and "
+                          "classified tool call misses. With a card it also returns `card` (last "
+                          "run, in-flight, hours idle) and `github` (PRs found by aw-card/aw-run "
+                          "labels and Target.pr_urls with state, checks, labels, review threads, "
+                          "facts and tag_gaps; `github.available=false` with a reason when GitHub "
+                          "cannot be read, the run part still returns). `repo`+`workflow` add the "
+                          "latest default-branch CI run. `filter_stale=true` ranks candidates by "
+                          "run inactivity (most idle first, no run in flight) and returns them as "
+                          "dossiers; human-comment and GitHub activity are checked afterwards, so "
+                          "check `card.stale` on each dossier before treating it as stale. "
+                          "`filter_stale_count` default 5, -1 for all, max 20; `offset` walks the "
+                          "initial ranking. Heavy: stale mode skips tool stats unless "
+                          "`include_tool_stats=true`. Unlike `run_tree`, card discovery can start "
+                          "from multiple seed runs. Unlike `tool_usage_metrics`, this follows the "
+                          "recursive run graph and returns token/cost totals."),
              inputSchema={"type": "object",
                           "properties": {
                               "card_id": {"type": "string",
-                                  "description": "Notion card UUID to discover seed runs from. Pass this or run_id, never both."},
+                                  "description": "Notion card UUID to discover seed runs from. Pass this or run_id, never both; leave empty with filter_stale."},
                               "run_id": {"type": "string",
-                                  "description": "Run UUID to use as the single discovery seed. Pass this or card_id, never both."},
+                                  "description": "Run UUID to use as the single discovery seed. Pass this or card_id, never both; leave empty with filter_stale."},
+                              "filter_stale": {"type": "boolean",
+                                  "description": "Stale-card mode: rank board cards by idle time and return dossiers. Exclusive with card_id/run_id."},
+                              "filter_stale_count": {"type": "integer",
+                                  "description": "Cards to return in stale mode. Default 5, -1 for all, max 20."},
+                              "offset": {"type": "integer",
+                                  "description": "Stale-mode window start over the idle ranking. Default 0."},
+                              "statuses": {"type": "string",
+                                  "description": "Comma list of board statuses for stale mode. Default running,need_human (in_progress is an alias of running)."},
+                              "min_idle_hours": {"type": "number",
+                                  "description": "Stale-mode minimum idle hours. Default 24."},
+                              "include_tool_stats": {"type": "boolean",
+                                  "description": "Fold RunEvents into per-tool stats. Default true for card_id/run_id, false in stale mode."},
+                              "include_github": {"type": "boolean",
+                                  "description": "Include the github section. Default true for card_id and stale mode, false for run_id."},
+                              "repo": {"type": "string",
+                                  "description": "owner/name for the CI block; needs workflow and card_id."},
+                              "workflow": {"type": "string",
+                                  "description": "Workflow file name or id for the CI block; needs repo."},
                           }}),
         Tool(name="cancel_run",
              description=("Cancel a running run. For workflows the cancel cascades "
@@ -3864,9 +3893,32 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
         if name == "run_cost_analytics":
             card_id = str(args.get("card_id") or "").strip()
             run_id = str(args.get("run_id") or "").strip()
-            if bool(card_id) == bool(run_id):
-                return _err(400, "Pass exactly one of card_id or run_id (not both).")
-            params = {"card_id": card_id} if card_id else {"run_id": run_id}
+            stale = args.get("filter_stale") is True
+            if stale:
+                if card_id or run_id:
+                    return _err(400, "filter_stale cannot be combined with card_id or run_id.")
+                params = {"filter_stale": "true"}
+            else:
+                if bool(card_id) == bool(run_id):
+                    return _err(400, "Pass exactly one of card_id or run_id (not both).")
+                params = {"card_id": card_id} if card_id else {"run_id": run_id}
+            # Forward only what the caller passed, so the wrapper keeps working
+            # against an AP-MT that does not know a newer parameter yet.
+            for key in ("include_tool_stats", "include_github"):
+                if isinstance(args.get(key), bool):
+                    params[key] = "true" if args[key] else "false"
+            if stale:
+                for key in ("filter_stale_count", "offset", "min_idle_hours"):
+                    if isinstance(args.get(key), (int, float)) and not isinstance(args.get(key), bool):
+                        params[key] = str(args[key])
+                statuses = args.get("statuses")
+                if isinstance(statuses, (list, tuple)):
+                    statuses = ",".join(str(x).strip() for x in statuses if str(x).strip())
+                if isinstance(statuses, str) and statuses.strip():
+                    params["statuses"] = statuses.strip()
+            for key in ("repo", "workflow"):
+                if str(args.get(key) or "").strip():
+                    params[key] = str(args[key]).strip()
             r = await c.get(f"{BASE}/api/runs/cost-analytics", params=params)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "list_runs":
