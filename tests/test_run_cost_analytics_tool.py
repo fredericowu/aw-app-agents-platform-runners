@@ -37,7 +37,8 @@ def test_tool_is_registered_without_top_level_union(monkeypatch):
 
     assert set(tool.inputSchema["properties"]) == {
         "card_id", "run_id", "filter_stale", "filter_stale_count", "offset", "statuses",
-        "min_idle_hours", "include_tool_stats", "include_github", "repo", "workflow"}
+        "min_idle_hours", "include_tool_stats", "include_github", "repo", "workflow",
+        "facts_only", "exclude_agents", "honor_stamp", "stamp_ttl_hours", "ci_since"}
     assert "required" not in tool.inputSchema
     assert "oneOf" not in tool.inputSchema
     assert "anyOf" not in tool.inputSchema
@@ -137,3 +138,24 @@ def test_filter_stale_false_keeps_exactly_one_selector_rule(monkeypatch):
 
     result = _call(monkeypatch, handler, {"filter_stale": False})
     assert "exactly one of card_id or run_id" in result[0].text
+
+
+def test_v11_params_forwarded_only_when_passed(monkeypatch):
+    seen = {}
+
+    def handler(request):
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"cards": []})
+
+    _call(monkeypatch, handler, {"filter_stale": True, "facts_only": True, "honor_stamp": False,
+                                 "stamp_ttl_hours": 24, "exclude_agents": " "})
+    assert seen["params"] == {"filter_stale": "true", "facts_only": "true", "honor_stamp": "false",
+                              "stamp_ttl_hours": "24", "exclude_agents": ""}
+    _call(monkeypatch, handler, {"card_id": "41b5bf3b-9510-8190-beeb-e2115e5be76f",
+                                 "facts_only": True, "repo": "o/r", "workflow": "w.yml",
+                                 "ci_since": "2026-11-22T10:00:00Z"})
+    assert seen["params"] == {"card_id": "41b5bf3b-9510-8190-beeb-e2115e5be76f",
+                              "facts_only": "true", "repo": "o/r", "workflow": "w.yml",
+                              "ci_since": "2026-11-22T10:00:00Z"}
+    _call(monkeypatch, handler, {"filter_stale": True})
+    assert seen["params"] == {"filter_stale": "true"}     # nothing new leaks to an older AP-MT
