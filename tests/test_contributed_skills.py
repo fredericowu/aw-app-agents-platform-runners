@@ -148,3 +148,12 @@ def test_the_qa_contract_scopes_set_blocker_to_the_review(declared):
     text = (APP_DIR / declared["aw-agent-qa"]).read_text()
     assert "reserve `set_blocker` for a review that cannot reach a verdict" in text.lower()
     assert "mark_flow_done" in text
+
+
+def test_code_reviewer_skill_defines_out_of_repo_by_where_the_defect_lives():
+    from pathlib import Path
+    text = (Path(__file__).resolve().parent.parent / "skills" / "aw-agent-code-reviewer"
+            / "SKILL.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+    assert "decided by where the defect LIVES" in flat
+    assert "is `diff_local`, even when its impact reaches other systems" in flat
