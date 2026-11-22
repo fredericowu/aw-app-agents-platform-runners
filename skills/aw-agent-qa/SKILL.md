@@ -95,6 +95,19 @@ evidence that supports each claim. State gaps explicitly. Use the
 - **Outside the accepted scope.** Link the existing finding or send the
   decision to Product Owner with evidence and record the continuation.
   Route independent in-scope fixes through the Coder handoff.
+- **Partly verified (access limits or flaky infrastructure).** When you
+  verified the core criteria but could not verify the rest because of
+  access you lack or infrastructure that is flaky or down, do not stop the
+  flow and do not use `need_human`. Record the verdict on what you did
+  verify and end the comment with two lists the Manager can read
+  mechanically:
+  `Verified:` each criterion with its evidence;
+  `Not verified:` each criterion with the reason (access, flaky infra,
+  which system) and what would be needed to verify it.
+  Never put an unverified item under `Verified:`. If the core criteria
+  themselves could not be verified, say so, and report that instead of
+  passing. The Manager decides whether to split the remainder into a
+  Backlog follow-up.
 - **Owner-only decision or access.** Identify the exact owner, decision
   or access and its evidence. Verify that `ask_human` delivered a pending
   question for this run before using `set_qa_status(status="need_human")`.
