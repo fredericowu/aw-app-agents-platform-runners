@@ -195,8 +195,8 @@ reportable fact, not a result to hide.
 A finding whose `file` is a path in this PR's own repo (the changed files, or
 any file of this checkout) is `diff_local`, even when its impact reaches other
 systems. `out_of_repo` means the fix must land in a DIFFERENT repo or a
-dependency (evidence is a URL or another repo's file:line) — and then omit
-`file`/`line` or name that repo in `body`. The pipeline hands an all-`out_of_repo`
+dependency (evidence is a URL or another repo's file:line) — and then put the
+external location in `evidence` or `body` and omit `file` and `line`. The pipeline hands an all-`out_of_repo`
 blocking set to the Manager instead of waking a coder, so a mis-tagged in-repo
 finding strands the PR with nobody fixing it.
 
