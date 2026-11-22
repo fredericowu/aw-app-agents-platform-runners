@@ -1447,6 +1447,16 @@ async def _list_tools() -> list[Tool]:
                                   "description": "Comma list of board statuses for stale mode. Default running,need_human (in_progress is an alias of running)."},
                               "min_idle_hours": {"type": "number",
                                   "description": "Stale-mode minimum idle hours. Default 24."},
+                              "facts_only": {"type": "boolean",
+                                  "description": "With card_id or filter_stale: return only computed facts per card (open_pr, pr_merged, checks_failing, merged_checks_failing, unresolved_threads incl. merged PRs, tag_gaps, pr_heads, hours_since_last_run, ask_human, card block with LastSweptAt/SweepBlock/UnblockProbe/QAStatus/priority/finding key/child count). No run list, PR rows or thread excerpts: a few K tokens per card."},
+                              "exclude_agents": {"type": "string",
+                                  "description": "Comma list of agent slugs left out of idle time. Default manager in stale/facts_only mode; pass an empty string to count every run."},
+                              "honor_stamp": {"type": "boolean",
+                                  "description": "Stale mode: hide cards whose LastSweptAt is newer than their latest run/ask_human fact (a human comment after the stamp brings them back). Default true."},
+                              "stamp_ttl_hours": {"type": "number",
+                                  "description": "Stale mode: a stamp older than this many hours no longer hides the card."},
+                              "ci_since": {"type": "string",
+                                  "description": "ISO timestamp (the failure's time); with repo+workflow the ci block adds green_after_since."},
                               "include_tool_stats": {"type": "boolean",
                                   "description": "Fold RunEvents into per-tool stats. Default true for card_id/run_id, false in stale mode."},
                               "include_github": {"type": "boolean",
@@ -3904,11 +3914,11 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                 params = {"card_id": card_id} if card_id else {"run_id": run_id}
             # Forward only what the caller passed, so the wrapper keeps working
             # against an AP-MT that does not know a newer parameter yet.
-            for key in ("include_tool_stats", "include_github"):
+            for key in ("include_tool_stats", "include_github", "facts_only", "honor_stamp"):
                 if isinstance(args.get(key), bool):
                     params[key] = "true" if args[key] else "false"
             if stale:
-                for key in ("filter_stale_count", "offset", "min_idle_hours"):
+                for key in ("filter_stale_count", "offset", "min_idle_hours", "stamp_ttl_hours"):
                     if isinstance(args.get(key), (int, float)) and not isinstance(args.get(key), bool):
                         params[key] = str(args[key])
                 statuses = args.get("statuses")
@@ -3916,11 +3926,25 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                     statuses = ",".join(str(x).strip() for x in statuses if str(x).strip())
                 if isinstance(statuses, str) and statuses.strip():
                     params["statuses"] = statuses.strip()
-            for key in ("repo", "workflow"):
+            for key in ("repo", "workflow", "ci_since"):
                 if str(args.get(key) or "").strip():
                     params[key] = str(args[key]).strip()
+            # "" is meaningful (count every run), so forward it, trimmed, when passed as a string
+            if isinstance(args.get("exclude_agents"), str):
+                params["exclude_agents"] = args["exclude_agents"].strip()
             r = await c.get(f"{BASE}/api/runs/cost-analytics", params=params)
-            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+            if r.status_code != 200:
+                return _err(r.status_code, r.text)
+            body = r.json()
+            if params.get("facts_only") == "true":
+                # An AP-MT that predates dossier v1.1 ignores the unknown query
+                # parameter and answers 200 with the full dossier.
+                rows = body.get("cards") if isinstance(body, dict) and "cards" in body else [body]
+                if any(isinstance(x, dict) and ("runs" in x or "totals" in x) for x in rows or []):
+                    return _err(426, "facts_only is not supported by this Agents Platform "
+                                     "backend (it returned the full dossier); update AP-MT to "
+                                     "dossier v1.1 or call without facts_only.")
+            return _ok(body)
         if name == "list_runs":
             params = {"limit": str(args.get("limit") or 20), "summary": "true"}
             if args.get("status"):
