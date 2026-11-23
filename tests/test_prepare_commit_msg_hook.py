@@ -58,7 +58,8 @@ HOOKS_DIR = ROOT / "agent-images" / "shared" / "git-hooks"
 # GIT_CONFIG_KEY_N/VALUE_N pairs git reads — leaving a stray one behind
 # would be read as a 4th, garbled entry.
 _IDENTITY_VARS = ("AW_RUN_ID", "AW_SESSION_ID", "NOTION_TASK_ID", "AW_WARM_DIR",
-                  "AW_SOURCE_DEVICE", "AW_GATEWAY_BEARER_TOKEN", "AW_AGENT_SLUG")
+                  "AW_SOURCE_DEVICE", "AW_GATEWAY_BEARER_TOKEN", "AW_AGENT_SLUG",
+                  "AW_PARENT_RUN_ID")
 
 
 def _clean_env(tmp_path, **overrides) -> dict:
@@ -227,6 +228,74 @@ def test_warm_reuse_prefers_this_turns_identity_over_the_containers_stale_baked_
     # container's agent never changes mid-session, so turn_env (which never
     # re-exports AW_AGENT_SLUG) must not clear it.
     assert "AW-Agent-Slug: coder-sonnet" in msg
+
+
+PARENT = "4d86fe4e451f4c4c8da70368afb2a99e"
+
+
+def test_parent_run_id_trailer_stamped_from_env(tmp_path):
+    repo = _init_repo(tmp_path)
+
+    result = _commit(repo, tmp_path, "a.txt", "p1", AW_RUN_ID="r1", AW_PARENT_RUN_ID=PARENT)
+
+    assert result.returncode == 0, result.stderr
+    assert f"AW-Parent-Run-Id: {PARENT}" in _last_message(repo, tmp_path)
+
+
+def test_parent_run_id_dashed_uuid_is_normalized_to_bare_hex(tmp_path):
+    repo = _init_repo(tmp_path)
+
+    result = _commit(repo, tmp_path, "a.txt", "p2", AW_RUN_ID="r1",
+                     AW_PARENT_RUN_ID="4D86FE4E-451F-4C4C-8DA7-0368AFB2A99E")
+
+    assert result.returncode == 0, result.stderr
+    assert f"AW-Parent-Run-Id: {PARENT}\n" in _last_message(repo, tmp_path)
+
+
+@pytest.mark.parametrize("value", ["", "not-a-run-id", "abc123"])
+def test_parent_run_id_absent_or_malformed_is_omitted(tmp_path, value):
+    repo = _init_repo(tmp_path)
+
+    result = _commit(repo, tmp_path, "a.txt", "p3", AW_RUN_ID="r1", AW_PARENT_RUN_ID=value)
+
+    assert result.returncode == 0, result.stderr
+    msg = _last_message(repo, tmp_path)
+    assert "AW-Run-Id: r1" in msg
+    assert "AW-Parent-Run-Id:" not in msg
+
+
+def test_warm_turn_env_parent_wins_over_stale_baked_env(tmp_path):
+    """Turn 2 of a reused warm container: the baked env still carries turn 1's
+    parent, turn_env (rewritten each turn) carries this turn's."""
+    repo = _init_repo(tmp_path)
+    warm_dir = tmp_path / "warm"
+    warm_dir.mkdir()
+    (warm_dir / "current_run_id").write_bytes(b"turn2run")
+    (warm_dir / "turn_env").write_text(f"export AW_PARENT_RUN_ID='{PARENT}'\n")
+
+    result = _commit(repo, tmp_path, "a.txt", "p4", AW_WARM_DIR=str(warm_dir),
+                     AW_PARENT_RUN_ID="a" * 32)
+
+    assert result.returncode == 0, result.stderr
+    msg = _last_message(repo, tmp_path)
+    assert f"AW-Parent-Run-Id: {PARENT}" in msg
+    assert "a" * 32 not in msg
+
+
+def test_warm_root_turn_clears_a_stale_parent(tmp_path):
+    """A root turn's turn_env exports AW_PARENT_RUN_ID empty; the stale parent
+    baked into the container env must not be stamped."""
+    repo = _init_repo(tmp_path)
+    warm_dir = tmp_path / "warm"
+    warm_dir.mkdir()
+    (warm_dir / "current_run_id").write_bytes(b"turn2run")
+    (warm_dir / "turn_env").write_text("export AW_PARENT_RUN_ID=''\n")
+
+    result = _commit(repo, tmp_path, "a.txt", "p5", AW_WARM_DIR=str(warm_dir),
+                     AW_PARENT_RUN_ID=PARENT)
+
+    assert result.returncode == 0, result.stderr
+    assert "AW-Parent-Run-Id:" not in _last_message(repo, tmp_path)
 
 
 def test_idempotent_replace_on_amend(tmp_path):
