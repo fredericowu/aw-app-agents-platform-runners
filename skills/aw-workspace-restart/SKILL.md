@@ -11,7 +11,7 @@ Three MCP tools on the agents-platform-runners server:
 - `workspace_restart_status(lock_id)` — read the lock: `phase`, `outcome`, `failure_report`, `in_flight_run_ids`, `expires_at`, `checks_done`.
 - `cancel_workspace_restart(lock_id)` — release the lock now; held fires replay immediately.
 
-If the feature is off on this deployment, `update_workspace` returns a 503 "not enabled" error and nothing happens. A 503 from `workspace_restart_status` or `cancel_workspace_restart` is NOT that: those routes stay enabled, so it is a service outage and you cannot tell whether a cancel took effect; re-read the status before assuming either way. Fall back to the manual path below.
+If the feature is off on this deployment, `update_workspace` returns a 503 "not enabled" error and nothing happens; follow the manual restart conditions below in that case. Any other 503 from `update_workspace` is an outage: nothing is known to be locked, so retry later. A 503 from `workspace_restart_status` or `cancel_workspace_restart` is also an outage (those routes stay enabled): the lock state is unknown and you cannot tell whether a cancel took effect. Re-read the status once the service recovers before taking any restart action; do not restart by hand, because a lock may still be draining in-flight runs.
 
 ## When to use which
 

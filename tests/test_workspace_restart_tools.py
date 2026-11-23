@@ -70,10 +70,19 @@ def test_workspace_omitted_defaults_server_side(monkeypatch):
 
 
 def test_update_503_is_clear_feature_off(monkeypatch):
-    out = _call(monkeypatch, lambda _r: httpx.Response(503, text="disabled"),
+    out = _call(monkeypatch, lambda _r: httpx.Response(
+        503, text='{"detail":"workspace restart locks are not enabled on this deployment yet"}'),
                 "update_workspace", {"reason": "r"})
     assert out["error"] and out["status"] == 503
     assert "not enabled" in out["message"]
+
+
+def test_update_503_outage_is_not_reported_as_feature_off(monkeypatch):
+    out = _call(monkeypatch, lambda _r: httpx.Response(503, text="upstream unavailable"),
+                "update_workspace", {"reason": "r"})
+    assert out["status"] == 503
+    assert "AGENTS_WORKSPACE_RESTART_LOCK_ENABLED" not in out["message"]
+    assert "upstream unavailable" in out["message"]
 
 
 def test_update_other_errors_pass_through(monkeypatch):

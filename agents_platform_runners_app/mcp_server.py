@@ -3407,7 +3407,7 @@ async def _workspace_restart_tool(c: httpx.AsyncClient, name: str, args: dict) -
         if (ws := (args.get("workspace") or "").strip()):
             body["workspace"] = ws
         r = await c.post(f"{BASE}/api/workspace-restarts", json=body)
-        if r.status_code == 503:
+        if r.status_code == 503 and "not enabled" in r.text.lower():
             return _err(503, _RESTART_LOCK_OFF, backend_body=r.text[:500])
     else:
         lock_id = (args.get("lock_id") or "").strip()
