@@ -239,6 +239,11 @@ rather than filing it separately.
 
 ## Tag the PR with its dispatching run's parent
 
+The runner's `prepare-commit-msg` hook now also stamps `AW-Parent-Run-Id`
+(and `AW-Agent-Slug`) onto every commit, but the shared provenance gate
+does not render the parent in the PR body yet, so keep tagging the PR by
+hand until it does.
+
 If this run's own dispatch carried a parent (another agent dispatched you —
 a conductor, a workflow, a Telegram-sourced flow hop), tag the PR you open
 with that lineage. Read the value from whichever channel is live for your
@@ -261,11 +266,8 @@ AW-Parent-Run-Id: <value of AW_PARENT_RUN_ID>
 
 Omit the line entirely when the breadcrumb is absent — root runs, a human
 opening the PR, or a run dispatched before both sides of this feature have
-deployed. This is a **documentation convention, not a CI gate** — PR
-authors here are heterogeneous (claude CLI, codex CLI, humans) and root
-runs legitimately have no parent, so nothing enforces the line's presence.
-It exists so a PR can be traced back to the run chain that produced it via
-`gh api`/`gh pr view`, grep-able on demand.
+deployed. This is a **documentation convention, not a CI gate**; it lets a
+PR be traced back to its run chain via `gh api`/`gh pr view`.
 
 ## Record the creating run's model on the PR
 

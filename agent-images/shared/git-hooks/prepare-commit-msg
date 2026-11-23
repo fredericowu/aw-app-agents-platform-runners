@@ -81,11 +81,26 @@ agent_slug="${AW_AGENT_SLUG:-}"
 # created with, which goes stale on turn 2+ of a reused warm container
 # exactly like current_run_id above. Sourcing it is safe here: it only ever
 # re-exports AW_RUN_ID/NOTION_TASK_ID/AW_SOURCE_DEVICE/
-# AW_GATEWAY_BEARER_TOKEN, and run_id was already resolved above.
+# AW_PARENT_RUN_ID/AW_GATEWAY_BEARER_TOKEN, and run_id was already resolved above.
 if [ -f "$warm_dir/turn_env" ]; then
     . "$warm_dir/turn_env"
 fi
 card_id="${NOTION_TASK_ID:-}"
+
+# The dispatching run's id, resolved AFTER turn_env like card_id: it is per
+# turn (a warm container's baked env goes stale), and a root turn's turn_env
+# exports it empty, which correctly clears a stale parent. Normalized to bare
+# 32-hex the same way run_id is; anything that is not a UUID/32-hex is
+# dropped rather than stamped, so the trailer is either well-formed or
+# absent (omitted for root runs).
+parent_run_id=$(printf '%s' "${AW_PARENT_RUN_ID:-}" | tr -d '-' | tr 'A-F' 'a-f')
+case "$parent_run_id" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+        ;;
+    *)
+        parent_run_id=""
+        ;;
+esac
 
 git interpret-trailers --if-exists replace \
     --trailer "AW-Run-Id: ${run_id}" --in-place "$msg_file"
@@ -100,4 +115,14 @@ fi
 if [ -n "$agent_slug" ]; then
     git interpret-trailers --if-exists replace \
         --trailer "AW-Agent-Slug: ${agent_slug}" --in-place "$msg_file"
+fi
+if [ -n "$parent_run_id" ]; then
+    git interpret-trailers --if-exists replace \
+        --trailer "AW-Parent-Run-Id: ${parent_run_id}" --in-place "$msg_file"
+else
+    # Root run (or malformed id): clear a parent trailer inherited from an
+    # amended child-run commit so it cannot contradict the new AW-Run-Id.
+    # (replace with an empty value, then --trim-empty drops it.)
+    git interpret-trailers --if-exists replace --trim-empty \
+        --trailer "AW-Parent-Run-Id:" --in-place "$msg_file"
 fi
