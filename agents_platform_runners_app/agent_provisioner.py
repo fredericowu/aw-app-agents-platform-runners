@@ -152,6 +152,17 @@ DEFAULTS: dict[str, dict[str, str]] = {
 #: ``targets``, ``workflows``, ``agents`` and ``plans`` have a restore
 #: route; every other kind still uses the plain "409 == already there"
 #: rule below.
+# Model pricing is NOT a generic model field. A manifest model may carry a
+# ``pricing`` block ({"revision": N, "input"|"output"|"cache_read"|"cache_write":
+# "<USD per 1M tokens>"|null}); it is applied ONLY through AP-MT's
+# contributed-defaults operation, which fills never-configured fields and
+# leaves every user-owned value (explicit null/0 included) alone. Price keys
+# are deliberately absent from ENDPOINTS["models"] so the generic reconcile
+# PUT can never push them and bypass that ownership.
+PRICING_KEY = "pricing"
+PRICING_APP_ID = "agents-platform-runners"
+_PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
+
 RESTORE_ENDPOINTS: dict[str, str] = {
     "targets": "/api/targets/{slug}/restore",
     "workflows": "/api/workflows/{slug}/restore",
@@ -242,9 +253,16 @@ class AgentProvisioner:
             return False
         path, allowed = ENDPOINTS[kind]
         body = {k: v for k, v in changes.items() if k in allowed}
+        headers = {"Authorization": f"Bearer {self.token}"}
+        pricing_done: bool | None = None
+        if kind == "models" and PRICING_KEY in changes:
+            with httpx.Client(base_url=self.base, headers=headers,
+                              timeout=self.timeout, transport=self.transport) as pc:
+                pricing_done = self._apply_pricing(pc, slug, changes)
+            if not body:
+                return pricing_done
         if not body:
             return False
-        headers = {"Authorization": f"Bearer {self.token}"}
         try:
             with httpx.Client(base_url=self.base, headers=headers,
                               timeout=self.timeout, transport=self.transport) as client:
@@ -258,7 +276,7 @@ class AgentProvisioner:
             log.warning("could not reconcile %s %r (%s)", kind, slug, exc)
             return False
         log.info("reconciled %s %r (%s)", kind, slug, ", ".join(sorted(body)))
-        return True
+        return pricing_done is not False
 
     # ---- tenant-scoped seeded-state baseline --------------------------------
     #
@@ -338,6 +356,51 @@ class AgentProvisioner:
             )
         return result
 
+    # ---- model pricing defaults -----------------------------------------------
+
+    def _pricing_supported(self, client: httpx.Client) -> bool:
+        """Does this AP-MT accept prices? An old one would accept-and-drop them
+        and the workspace would then advance its seeded baseline as though they
+        had landed, so ask first and report the degradation by name."""
+        try:
+            resp = client.get("/api/models/capabilities")
+            if resp.status_code == 200 and resp.json().get("model_pricing"):
+                return True
+        except (httpx.HTTPError, ValueError, AttributeError):
+            pass
+        log.warning("model pricing DEGRADED: agents platform does not advertise "
+                    "model_pricing; prices omitted and will be retried after the "
+                    "platform is upgraded")
+        return False
+
+    def _apply_pricing(self, client: httpx.Client, slug: str, entry: dict[str, Any]) -> bool:
+        """PUT one model's contributed price defaults. True when applied (or the
+        entry declares none); False when it could not be, so the caller does not
+        advance a baseline over a price that never landed."""
+        block = entry.get(PRICING_KEY)
+        if not isinstance(block, dict):
+            return True
+        if not self._pricing_supported(client):
+            return False
+        prices = {f: block.get(f) for f in _PRICE_FIELDS if f in block}
+        body = {"app_id": PRICING_APP_ID, "revision": int(block.get("revision", 1)),
+                "prices": prices}
+        try:
+            resp = client.put(f"/api/models/{slug}/pricing-defaults", json=body)
+        except httpx.HTTPError as exc:
+            log.warning("could not apply pricing defaults for model %r (%s)", slug, exc)
+            return False
+        if resp.status_code == 409:
+            # Older revision or another owner: the platform already holds
+            # something at least as new; nothing for us to do.
+            log.debug("pricing defaults for model %r not applied (409): %s", slug, resp.text[:200])
+            return True
+        if resp.status_code >= 400:
+            log.warning("pricing defaults for model %r rejected: HTTP %s %s",
+                        slug, resp.status_code, resp.text[:300])
+            return False
+        return True
+
     # ---- internals ---------------------------------------------------------
 
     def _seed_kind(self, client: httpx.Client, app_id: str, kind: str,
@@ -353,6 +416,8 @@ class AgentProvisioner:
                 # Content is seeded once and never rewritten — but a
                 # CREDENTIAL is not content. See _refresh_credentials.
                 self._refresh_credentials(client, app_id, kind, path, slug, entry)
+                if kind == "models":
+                    self._apply_pricing(client, slug, entry)
                 log.debug("%s %r already exists, leaving it alone", kind, slug)
                 continue
             body = _payload(kind, entry, allowed)
@@ -375,6 +440,8 @@ class AgentProvisioner:
                 continue
             count += 1
             log.info("seeded %s %r from %s", kind, slug, app_id)
+            if kind == "models":
+                self._apply_pricing(client, slug, entry)
         return count
 
     def _restore_if_soft_deleted(self, client: httpx.Client, app_id: str, kind: str,
