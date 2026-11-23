@@ -81,6 +81,14 @@ evidence that supports each claim. State gaps explicitly. Use the
 - **Pass.** Call `set_qa_status` once with `done` or `ready_to_deploy`
   according to the actual rollout. Include the reviewed revision and
   evidence. Verify the resulting card state.
+  **Before `ready_to_deploy`:** set `DeployComponent` and
+  `DeployToVersion` with `set_kanban_property` (also `DeployEnv` /
+  `DeployWorkspaces` when they differ from prod / this workspace), unless the
+  Coder already set them correctly: verify them against the merged release.
+  `DeployComponent` is one of `app:<slug>`, `service:<name>`, `core`,
+  `remote-host`, or `none` when nothing needs deploying; `DeployToVersion`
+  is an exact `vX.Y.Z` or commit SHA, never `latest`. A card without them is
+  `invalid` for `kanban_check_deployed` and never leaves the lane.
 - **Actionable rework.** Call
   `handoff_kanban_card(page_id, revision, evidence)` on an In Progress or
   Testing card. Supply the full reviewed SHA or stable artifact revision,
