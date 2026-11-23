@@ -182,6 +182,7 @@
       "models": [
         {
           "slug": "codex-runner-gpt-6-1-sol",
+          "pricing": {"revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
           "provider": "runner",
           "model_id": "codex-runner-gpt-6-1-sol",
           "display_name": "Codex (aw Runner, GPT-6.1 Sol)",
@@ -195,6 +196,7 @@
         },
         {
           "slug": "codex-runner-gpt-6-astra",
+          "pricing": {"revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
           "provider": "runner",
           "model_id": "codex-runner-gpt-6-astra",
           "display_name": "Codex (aw Runner, GPT-6 Astra)",
@@ -208,6 +210,7 @@
         },
         {
           "slug": "codex-runner-gpt-6-1-terra",
+          "pricing": {"revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
           "provider": "runner",
           "model_id": "codex-runner-gpt-6-1-terra",
           "display_name": "Codex (aw Runner, GPT-6.1 Terra)",
@@ -221,6 +224,7 @@
         },
         {
           "slug": "codex-runner-gpt-6-sol",
+          "pricing": {"revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
           "provider": "runner",
           "model_id": "codex-runner-gpt-6-sol",
           "display_name": "Codex (aw Runner, GPT-6 Sol)",
@@ -234,6 +238,7 @@
         },
         {
           "slug": "codex-runner-gpt-6-luna",
+          "pricing": {"revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
           "provider": "runner",
           "model_id": "codex-runner-gpt-6-luna",
           "display_name": "Codex (aw Runner, GPT-6 Luna)",
@@ -809,6 +814,7 @@
         },
         {
           "slug": "codex-cli-gpt-5",
+          "pricing": {"revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0"},
           "provider": "cli",
           "model_id": "codex-cli-gpt-5",
           "display_name": "Codex CLI \u2013 GPT-5 Codex (requires `codex` on PATH)",
