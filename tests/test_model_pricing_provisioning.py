@@ -9,7 +9,7 @@ import httpx
 from agents_platform_runners_app.agent_provisioner import ENDPOINTS, AgentProvisioner
 
 PRICING = {"revision": 3, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0"}
-MODEL = {"slug": "codex-x", "provider": "runner", "model_id": "codex-x", "pricing": PRICING}
+MODEL = {"slug": "codex-runner-gpt-6-1-sol", "provider": "runner", "model_id": "codex-runner-gpt-6-1-sol", "pricing": PRICING}
 
 
 class Platform:
@@ -45,16 +45,16 @@ def test_create_sends_no_prices_in_post_then_applies_defaults():
     post = next(c for c in p.calls if c[0] == "POST" and c[1] == "/api/models")
     assert "pricing" not in post[2] and not any(k.startswith("price_") for k in post[2])
     put = next(c for c in p.calls if c[0] == "PUT")
-    assert put[1] == "/api/models/codex-x/pricing-defaults"
+    assert put[1] == "/api/models/codex-runner-gpt-6-1-sol/pricing-defaults"
     assert put[2] == {"app_id": "agents-platform-runners", "revision": 3,
                       "prices": {"input": "0", "output": "0", "cache_read": "0", "cache_write": "0"}}
 
 
 def test_existing_model_still_gets_defaults_not_a_generic_put():
-    p = Platform(existing=["codex-x"])
+    p = Platform(existing=["codex-runner-gpt-6-1-sol"])
     prov(p).seed("agents-platform-runners", {"models": [MODEL]})
     puts = [c for c in p.calls if c[0] == "PUT"]
-    assert [c[1] for c in puts] == ["/api/models/codex-x/pricing-defaults"]
+    assert [c[1] for c in puts] == ["/api/models/codex-runner-gpt-6-1-sol/pricing-defaults"]
 
 
 def test_old_platform_without_capability_gets_no_prices_and_reconcile_is_not_acked():
@@ -63,19 +63,19 @@ def test_old_platform_without_capability_gets_no_prices_and_reconcile_is_not_ack
     pr.seed("agents-platform-runners", {"models": [MODEL]})
     assert not [c for c in p.calls if c[0] == "PUT"]
     # reconcile returns False so the workspace does not advance its baseline
-    assert pr.update("models", "codex-x", {"pricing": PRICING}) is False
+    assert pr.update("models", "codex-runner-gpt-6-1-sol", {"pricing": PRICING}) is False
 
 
 def test_reconcile_update_routes_pricing_and_acks():
     p = Platform()
-    assert prov(p).update("models", "codex-x", {"pricing": PRICING}) is True
-    assert [c[1] for c in p.calls if c[0] == "PUT"] == ["/api/models/codex-x/pricing-defaults"]
+    assert prov(p).update("models", "codex-runner-gpt-6-1-sol", {"pricing": PRICING}) is True
+    assert [c[1] for c in p.calls if c[0] == "PUT"] == ["/api/models/codex-runner-gpt-6-1-sol/pricing-defaults"]
 
 
 def test_reconcile_with_other_fields_never_forwards_pricing_in_generic_put():
     p = Platform()
-    assert prov(p).update("models", "codex-x", {"display_name": "N", "pricing": PRICING}) is True
-    generic = next(c for c in p.calls if c[0] == "PUT" and c[1] == "/api/models/codex-x")
+    assert prov(p).update("models", "codex-runner-gpt-6-1-sol", {"display_name": "N", "pricing": PRICING}) is True
+    generic = next(c for c in p.calls if c[0] == "PUT" and c[1] == "/api/models/codex-runner-gpt-6-1-sol")
     assert generic[2] == {"display_name": "N"}
 
 
@@ -87,3 +87,44 @@ def test_manifest_codex_models_are_explicit_zero_and_others_unset():
             assert m["pricing"] == PRICING | {"revision": 1}, m["slug"]
         else:
             assert "pricing" not in m, m["slug"]  # no invented tariffs
+
+
+# ---- review round 1 ----
+def test_pricing_failure_does_not_withhold_ack_for_fields_that_landed():
+    class P(Platform):
+        def __call__(self, req):
+            if req.method == "PUT" and req.url.path.endswith("/pricing-defaults"):
+                return httpx.Response(500)
+            return super().__call__(req)
+    p = P()
+    assert prov(p).update("models", MODEL["slug"], {"display_name": "B", "pricing": PRICING}) is True
+    assert any(c[0] == "PUT" and c[1] == f"/api/models/{MODEL['slug']}" for c in p.calls)
+    # pricing-only failure is still not acked (nothing landed; retried)
+    assert prov(P()).update("models", MODEL["slug"], {"pricing": PRICING}) is False
+
+
+def test_other_apps_models_never_get_defaults_under_runners_identity():
+    p = Platform()
+    other = {**MODEL, "slug": "someone-elses-model"}
+    prov(p).seed("other-app", {"models": [other]})
+    assert not [c for c in p.calls if c[1].endswith("/pricing-defaults")]
+    assert prov(p).update("models", "someone-elses-model", {"pricing": PRICING}) is True
+    assert not [c for c in p.calls if c[1].endswith("/pricing-defaults")]
+
+
+def test_invalid_revision_does_not_abort_the_seed_pass():
+    p = Platform()
+    bad = {**MODEL, "pricing": {**PRICING, "revision": None}}
+    second = {"slug": "after-it", "provider": "runner", "model_id": "after-it"}
+    created = prov(p).seed("agents-platform-runners", {"models": [bad, second]})
+    assert created.get("models") == 2
+    assert not [c for c in p.calls if c[1].endswith("/pricing-defaults")]
+
+
+def test_redirected_pricing_put_is_not_acknowledged():
+    class P(Platform):
+        def __call__(self, req):
+            if req.method == "PUT" and req.url.path.endswith("/pricing-defaults"):
+                return httpx.Response(307, headers={"location": "http://elsewhere/x"})
+            return super().__call__(req)
+    assert prov(P()).update("models", MODEL["slug"], {"pricing": PRICING}) is False

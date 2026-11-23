@@ -66,6 +66,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -161,6 +162,24 @@ DEFAULTS: dict[str, dict[str, str]] = {
 # PUT can never push them and bypass that ownership.
 PRICING_KEY = "pricing"
 PRICING_APP_ID = "agents-platform-runners"
+
+
+def _own_model_slugs() -> frozenset[str]:
+    """Model slugs shipped by this app's own manifest (the only ones whose
+    price defaults may be recorded under PRICING_APP_ID)."""
+    global _OWN_MODELS
+    if _OWN_MODELS is None:
+        try:
+            manifest = json.loads((Path(__file__).resolve().parents[1] / "aw-app.json")
+                                  .read_text(encoding="utf-8"))
+            models = (manifest.get("contributes", {}).get("agents") or {}).get("models") or []
+            _OWN_MODELS = frozenset(str(m.get("slug")) for m in models if m.get("slug"))
+        except (OSError, ValueError, AttributeError):
+            _OWN_MODELS = frozenset()
+    return _OWN_MODELS
+
+
+_OWN_MODELS: frozenset[str] | None = None
 _PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
 
 RESTORE_ENDPOINTS: dict[str, str] = {
@@ -276,7 +295,11 @@ class AgentProvisioner:
             log.warning("could not reconcile %s %r (%s)", kind, slug, exc)
             return False
         log.info("reconciled %s %r (%s)", kind, slug, ", ".join(sorted(body)))
-        return pricing_done is not False
+        # Pricing has its own retry loop (seed() re-applies defaults on every
+        # boot, idempotent per revision), so a pricing failure must not hold
+        # back the baseline for the fields that DID land: otherwise a later
+        # manifest change is mistaken for a manual edit and silently skipped.
+        return True
 
     # ---- tenant-scoped seeded-state baseline --------------------------------
     #
@@ -380,11 +403,20 @@ class AgentProvisioner:
         block = entry.get(PRICING_KEY)
         if not isinstance(block, dict):
             return True
+        if slug not in _own_model_slugs():
+            # Defaults are recorded under this app's identity, so only models
+            # this app's own catalog ships may carry them; another app's price
+            # block is not ours to write (nor to claim ownership of).
+            log.debug("pricing for model %r ignored: not in this app's catalog", slug)
+            return True
         if not self._pricing_supported(client):
             return False
+        rev = block.get("revision", 1)
+        if isinstance(rev, bool) or not isinstance(rev, int) or rev < 0:
+            log.warning("pricing for model %r skipped: invalid revision %r", slug, rev)
+            return False
         prices = {f: block.get(f) for f in _PRICE_FIELDS if f in block}
-        body = {"app_id": PRICING_APP_ID, "revision": int(block.get("revision", 1)),
-                "prices": prices}
+        body = {"app_id": PRICING_APP_ID, "revision": rev, "prices": prices}
         try:
             resp = client.put(f"/api/models/{slug}/pricing-defaults", json=body)
         except httpx.HTTPError as exc:
@@ -395,7 +427,7 @@ class AgentProvisioner:
             # something at least as new; nothing for us to do.
             log.debug("pricing defaults for model %r not applied (409): %s", slug, resp.text[:200])
             return True
-        if resp.status_code >= 400:
+        if not resp.is_success:
             log.warning("pricing defaults for model %r rejected: HTTP %s %s",
                         slug, resp.status_code, resp.text[:300])
             return False
