@@ -343,6 +343,26 @@ run's own Kanban-card context, so just call
 `set_kanban_property(property="is_deployment_needed", value=true)` with no
 `page_id`. See the `aw-kanban` skill's "page_id is auto-filled" section.
 
+### Deploy fields (Ready to Deploy lane)
+
+Whenever you hand a card to the `Ready to Deploy` lane, or finish a delivery
+that still needs a deploy step, set the Deploy fields with
+`set_kanban_property` in the same turn. `kanban_check_deployed` reads them
+and skips a card whose fields are empty or malformed (`invalid`), so it
+would never move:
+
+- `DeployComponent`: exactly one of `app:<slug>`, `service:<name>`, `core`,
+  `remote-host`. Use `none` when the work needs no deployment at all (docs,
+  KB, a config change that is live on save).
+- `DeployToVersion`: the exact released version (`vX.Y.Z`) or commit SHA
+  (7-40 hex) that carries the change. Never `latest`. Not required for `none`.
+- `DeployEnv` (default `prod`) and `DeployWorkspaces` (empty = this
+  workspace) only when they differ.
+
+Read the version from the release you verified, not from a guess. If the
+component or version is not knowable, say so on the card instead of
+guessing.
+
 ## Load these tools directly — don't blind-search for them
 
 When this run has a Kanban card, you'll likely need these. `ToolSearch` with
