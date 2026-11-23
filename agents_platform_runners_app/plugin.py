@@ -359,7 +359,11 @@ class AgentsPlatformRunnersAppPlugin:
 
         ctx.routes.register(routes_mod.build_routes(
             self._live_config, kanban_sweep_status=self._kanban_sweep_status,
-            package_dir=ctx.package_dir))
+            package_dir=ctx.package_dir,
+            # /healthy needs core's AppRuntime to compute gateway readiness
+            # (src.apps.gateway_readiness). AppContext keeps it private; this
+            # is the only consumer, read lazily per request.
+            runtime_provider=lambda: ctx._runtime))
 
         self._register_exec_index_service(ctx, self._live_config)
 

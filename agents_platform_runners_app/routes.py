@@ -26,6 +26,7 @@ from . import codex_scope_canary as codex_scope_canary_mod
 from . import execute as execute_mod
 from . import execution_index as execution_index_mod
 from . import kanban_dispatch
+from . import lifecycle as lifecycle_mod
 from . import notion_subscription as notion_subscription_mod
 from . import notion_token_sync as notion_token_sync_mod
 from . import observability_push as observability_push_mod
@@ -72,7 +73,7 @@ _FAILURE_RATIO_MIN_SAMPLE = 5
 
 
 def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None = None,
-                 package_dir: str | None = None) -> FastAPI:
+                 package_dir: str | None = None, runtime_provider=None) -> FastAPI:
     """Mode-agnostic factory — call this fresh for each mode (plugin.py /
     __main__.py both call it exactly once).
 
@@ -90,7 +91,12 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
     ``package_dir`` is this app's install dir, passed by plugin.py so
     ``/register-observability`` can regenerate the mcp.json next to it.
     Absent in standalone mode (``__main__.py``), where there is no gateway
-    to serve that file to anyway."""
+    to serve that file to anyway.
+
+    ``runtime_provider`` is a zero-arg callable returning core's AppRuntime,
+    handed over by plugin.py so ``/healthy`` can ask the same gateway
+    readiness logic ``aw-workspace-cli doctor`` uses. None in standalone mode
+    (``/healthy`` then skips the gateway check and says so)."""
     app = FastAPI(title="agents-platform-runners")
     cfg = config if config is not None else {}
     # Same identity rule as cfg above: plugin.py hands us its own
@@ -180,6 +186,37 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
             # otherwise show up only as telemetry quietly disappearing.
             "otel": otel_env_mod.status(),
         }
+
+    @app.get("/healthy", dependencies=[Depends(require_execute_secret)])
+    async def healthy() -> dict:
+        """Can this workspace run agents right now? ``ready`` is true only when
+        the three ``/execute`` preconditions hold AND the mcp-gateway has all
+        local upstreams reconnected. Gated by the execute secret so the probe
+        exercises the exact auth ``/execute`` uses (a 401 means "secret not
+        re-registered yet", a 500 "execute_secret unset"). ``boot_id`` changes
+        iff core restarted; callers compare it with the value they captured
+        before dispatching a restart. Always 200: not-ready is data, not an
+        error."""
+        return await lifecycle_mod.healthy_payload(cfg, runtime_provider)
+
+    @app.post("/lifecycle/restart", dependencies=[Depends(require_execute_secret)])
+    async def lifecycle_restart(request: Request):
+        """Restart core on already-pushed code via
+        ``aw-workspace-cli restart core --request-id X --json`` (idempotent per
+        request_id: a replay answers ``already_dispatched`` and restarts
+        nothing). Never waits for the restart: core dies mid-way, so callers
+        observe completion through /healthy (new boot_id). Body:
+        ``{"request_id": "<[A-Za-z0-9_-]{1,64}>"}``. 202 = accepted; any other
+        status is a structured refusal carrying the CLI's ``status``."""
+        from fastapi.responses import JSONResponse
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, "body is not valid JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "body must be a JSON object")
+        http, payload = await lifecycle_mod.restart_core(body.get("request_id"))
+        return JSONResponse(payload, status_code=http)
 
     @app.get("/warm-containers")
     async def warm_containers(include_draining: bool = False) -> dict:
