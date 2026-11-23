@@ -153,6 +153,11 @@
         "description": "On-demand Agents Flow guidance for terminal tool failures, partial reviews, ad-hoc card binding and callback recovery."
       },
       {
+        "id": "aw-workspace-restart",
+        "path": "skills/aw-workspace-restart/SKILL.md",
+        "description": "Gracefully update or restart a workspace from an agent (update_workspace / workspace_restart_status / cancel_workspace_restart): when to use them vs restarting core by hand, the 1h lock and drain behaviour, and what to do for each failure outcome."
+      },
+      {
         "id": "aw-agents-flow",
         "path": "skills/aw-agents-flow/SKILL.md",
         "description": "The Agents Flow handoff contract \u2014 the three terminal actions (run_agent_async / return_to_caller_agent / mark_flow_done) an agent must end its turn with when it is a node in an enabled flow. agents-platform's executor auto-injects this skill at dispatch, so it must exist in the workspace skills tree or every flow agent runs without the contract and gets escalated to a human."

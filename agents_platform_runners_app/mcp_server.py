@@ -1131,6 +1131,62 @@ async def _list_tools() -> list[Tool]:
                           "properties": {"wakeup_id": {"type": "string",
                                                        "description": "The wakeup_id to cancel. REQUIRED."}},
                           "required": ["wakeup_id"]}),
+        Tool(name="update_workspace",
+             description=("Gracefully update (or, with restart_only=true, just restart) a "
+                          "workspace: the platform takes a restart lock, drains in-flight runs, "
+                          "performs the update/restart, verifies the workspace is healthy again, "
+                          "then wakes YOU with a report. Returns IMMEDIATELY with the lock id and "
+                          "its state — it never blocks. After calling it, END YOUR TURN; the "
+                          "outcome arrives as a wake-up, not as this tool's return value.\n\n"
+                          "How the lock behaves:\n"
+                          "- The lock lasts 1 hour at most, then expires on its own.\n"
+                          "- While it is held, new fires on that workspace (messages, scheduled "
+                          "runs, dispatches) are NOT lost: they become scheduled wake-ups and "
+                          "replay in order once the lock is released.\n"
+                          "- Runs already in flight are given up to 30 minutes to drain. There is "
+                          "NO abort and NO force: if runs are still going at the deadline nothing "
+                          "is restarted (outcome `drain_timeout`, with the straggler run ids).\n"
+                          "- You are woken with a report on success AND on failure, and then YOU "
+                          "decide what to do next (call this tool again, cancel_workspace_restart, "
+                          "or give up). Nothing is retried automatically.\n\n"
+                          "Scope: any workspace of your OWN tenant is allowed; `workspace` "
+                          "defaults to the workspace you are running on. Another tenant's "
+                          "workspace is refused. If you target your OWN workspace from inside a "
+                          "run, that run is expected to end when the restart happens — you get "
+                          "woken afterwards with the report.\n\n"
+                          "restart_only=false (default) runs the same update the aw-console "
+                          "Update button runs (pull latest release, recreate, verify); "
+                          "restart_only=true only restarts the core.\n\n"
+                          "If the feature is not enabled on this deployment you get a clear "
+                          "'not enabled' error (HTTP 503) and nothing happens. Poll "
+                          "`workspace_restart_status` if you need the state before the wake-up."),
+             inputSchema={"type": "object",
+                          "properties": {"workspace": {"type": ["string", "null"],
+                                                       "description": "Slug of the workspace to update/restart. Must belong to your own tenant. Omit/null = the workspace you run on."},
+                                        "restart_only": {"type": "boolean", "default": False,
+                                                         "description": "true = restart only, no update. Default false = full update."},
+                                        "reason": {"type": "string",
+                                                   "description": "One short line on why — recorded on the lock and the activity log. REQUIRED."}},
+                          "required": ["reason"]}),
+        Tool(name="workspace_restart_status",
+             description=("Read the state of a restart/update lock created by `update_workspace`: "
+                          "phase, outcome, failure_report, in_flight_run_ids, expires_at, "
+                          "checks_done. Read-only. The final outcome is also delivered to the "
+                          "requester as a wake-up, so you normally do not need to poll."),
+             inputSchema={"type": "object",
+                          "properties": {"lock_id": {"type": "string",
+                                                     "description": "The lock id returned by update_workspace. REQUIRED."}},
+                          "required": ["lock_id"]}),
+        Tool(name="cancel_workspace_restart",
+             description=("Cancel a restart/update lock created by `update_workspace`: it is "
+                          "released now and held fires replay immediately. Use it after a failure "
+                          "report to stop an active failed lock from holding fires, or when the "
+                          "restart is no longer wanted. It cannot undo a restart that has "
+                          "already been dispatched to the workspace."),
+             inputSchema={"type": "object",
+                          "properties": {"lock_id": {"type": "string",
+                                                     "description": "The lock id to cancel. REQUIRED."}},
+                          "required": ["lock_id"]}),
         Tool(name="supervise",
              description=("Watch another session's whole run chain (that session plus every "
                           "descendant session/run it spawns) and get woken up on YOUR OWN "
@@ -3318,6 +3374,60 @@ async def _call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextCo
         return await _dispatch_tool(name, arguments)
 
 
+_RESTART_LOCK_OFF = (
+    "Graceful workspace restart/update is not enabled on this deployment "
+    "(AP-MT answered 503: AGENTS_WORKSPACE_RESTART_LOCK_ENABLED is off). Nothing was "
+    "locked, restarted or updated. Ask the operator to enable the feature, or restart "
+    "by hand.")
+
+
+async def _workspace_restart_tool(c: httpx.AsyncClient, name: str, args: dict) -> list[TextContent]:
+    """update_workspace / workspace_restart_status / cancel_workspace_restart.
+
+    The calling run comes from ``_caller_run_id`` — never an argument — so a
+    lock can only be requested, read or cancelled on behalf of the real caller.
+    A 503 on the create route means the feature flag is off; surface that as a
+    plain 'not enabled' rather than the backend's raw body.
+    """
+    own_run_id = _caller_run_id(args)
+    if not own_run_id:
+        return _err(400, "Could not identify this run — this tool only works inside a docker CLI agent run.")
+    if name == "update_workspace":
+        reason = (args.get("reason") or "").strip()
+        if not reason:
+            return _err(400, "reason is required — one short line on why the workspace is being updated/restarted")
+        restart_only = args.get("restart_only")
+        if restart_only is None:
+            restart_only = False
+        if not isinstance(restart_only, bool):
+            return _err(400, "restart_only must be a boolean")
+        body: dict[str, Any] = {"caller_run_id": own_run_id,
+                                "restart_only": restart_only,
+                                "reason": reason}
+        if (ws := (args.get("workspace") or "").strip()):
+            body["workspace"] = ws
+        r = await c.post(f"{BASE}/api/workspace-restarts", json=body)
+        if r.status_code == 503:
+            return _err(503, _RESTART_LOCK_OFF, backend_body=r.text[:500])
+    else:
+        lock_id = (args.get("lock_id") or "").strip()
+        if not lock_id:
+            return _err(400, "lock_id is required")
+        if "/" in lock_id or ".." in lock_id:
+            return _err(400, "lock_id is malformed")
+        if name == "workspace_restart_status":
+            r = await c.get(f"{BASE}/api/workspace-restarts/{lock_id}",
+                            params={"caller_run_id": own_run_id})
+        else:
+            r = await c.post(f"{BASE}/api/workspace-restarts/{lock_id}/cancel",
+                             json={"caller_run_id": own_run_id})
+        if r.status_code == 503:
+            return _err(503, _RESTART_LOCK_OFF, backend_body=r.text[:500])
+    if r.status_code not in (200, 201, 202):
+        return _err(r.status_code, r.text)
+    return _ok(r.json())
+
+
 async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
     args = arguments or {}
     async with httpx.AsyncClient(timeout=120, headers=AUTH_HEADERS,
@@ -3821,6 +3931,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             r = await c.post(f"{BASE}/api/wakeups/{wakeup_id}/cancel",
                              json={"caller_run_id": own_run_id})
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+        if name in ("update_workspace", "workspace_restart_status", "cancel_workspace_restart"):
+            return await _workspace_restart_tool(c, name, args)
         if name == "supervise":
             own_run_id = _caller_run_id(args)
             if not own_run_id:
