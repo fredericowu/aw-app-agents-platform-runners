@@ -298,6 +298,20 @@ def test_warm_root_turn_clears_a_stale_parent(tmp_path):
     assert "AW-Parent-Run-Id:" not in _last_message(repo, tmp_path)
 
 
+def test_root_run_amending_a_child_commit_drops_the_inherited_parent(tmp_path):
+    repo = _init_repo(tmp_path)
+    first = _commit(repo, tmp_path, "a.txt", "c1", AW_RUN_ID="r1", AW_PARENT_RUN_ID=PARENT)
+    assert first.returncode == 0, first.stderr
+    assert f"AW-Parent-Run-Id: {PARENT}" in _last_message(repo, tmp_path)
+
+    amend = _git(repo, _clean_env(tmp_path, AW_RUN_ID="r2"), "commit", "-q", "--amend", "--no-edit")
+
+    assert amend.returncode == 0, amend.stderr
+    msg = _last_message(repo, tmp_path)
+    assert "AW-Run-Id: r2" in msg
+    assert "AW-Parent-Run-Id" not in msg
+
+
 def test_idempotent_replace_on_amend(tmp_path):
     repo = _init_repo(tmp_path)
     first = _commit(repo, tmp_path, "a.txt", "first", AW_RUN_ID="r1")

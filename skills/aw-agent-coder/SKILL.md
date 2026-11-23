@@ -237,32 +237,49 @@ verb/command should degrade with a clear "unsupported — update to vX.Y.Z"
 rather than an opaque error; if it doesn't, fix that alongside the new verb
 rather than filing it separately.
 
-## Parent-run lineage is stamped for you
+## Tag the PR with its dispatching run's parent
+
+The runner's `prepare-commit-msg` hook now also stamps `AW-Parent-Run-Id`
+(and `AW-Agent-Slug`) onto every commit, but the shared provenance gate
+does not render the parent in the PR body yet, so keep tagging the PR by
+hand until it does.
 
 If this run's own dispatch carried a parent (another agent dispatched you —
-a conductor, a workflow, a Telegram-sourced flow hop), the runner's
-`prepare-commit-msg` hook stamps `AW-Parent-Run-Id` (and `AW-Agent-Slug`)
-onto every commit you make, resolving the value from the warm container's
-per-turn `turn_env` before the baked env, and omitting the trailer for a
-root run. The provenance gate then renders both in the PR body's
-Provenance section.
+a conductor, a workflow, a Telegram-sourced flow hop), tag the PR you open
+with that lineage. Read the value from whichever channel is live for your
+CLI/container:
 
-Do **not** hand-write an `AW-Parent-Run-Id:` line in the PR body footer; it
-would duplicate (and could contradict) what the gate renders. Just commit
-normally. If `git log -1 --format=%B` shows no `AW-Parent-Run-Id` trailer on
-a run you know had a parent, report it as a hook/runner fault rather than
-patching the PR body.
+- **codex, or a cold/ephemeral claude container:** the `$AW_PARENT_RUN_ID`
+  env var.
+- **a warm claude container:** the `[SYSTEM] Execution context for this
+  turn:` prompt header, not the env var — claude's OS env is frozen at
+  container creation, so a warm container's env can be stale by the time a
+  later turn runs; the per-turn header is authoritative, the same rule that
+  already applies to `$AW_RUN_ID`/`$NOTION_TASK_ID` there.
+
+When present, add a trailer-style line in the **PR body footer**, next to
+the existing "🤖 Generated with Claude Code" footer:
+
+```
+AW-Parent-Run-Id: <value of AW_PARENT_RUN_ID>
+```
+
+Omit the line entirely when the breadcrumb is absent — root runs, a human
+opening the PR, or a run dispatched before both sides of this feature have
+deployed. This is a **documentation convention, not a CI gate**; it lets a
+PR be traced back to its run chain via `gh api`/`gh pr view`.
 
 ## Record the creating run's model on the PR
 
-When opening a PR, add `Agent-Model: <value>` to the body footer if
-the current run exposes a model. In warm Claude,
+When opening a PR, add `Agent-Model: <value>` to the body footer beside
+`AW-Parent-Run-Id` if the current run exposes a model. In warm Claude,
 use `AW_AGENT_MODEL` from the current turn's execution-context header.
 In Codex and cold runners, use the `AW_AGENT_MODEL` environment variable.
 
 Omit the line when the field is absent or empty. Use only the runner's
 bounded identifier. Preserve the opening run's line on review or fix
-pushes and when editing the PR body. Keep the existing run provenance intact.
+pushes and when editing the PR body. Keep the existing run and parent
+provenance intact.
 
 ## Handing off to QA
 

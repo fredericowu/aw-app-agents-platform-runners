@@ -119,4 +119,10 @@ fi
 if [ -n "$parent_run_id" ]; then
     git interpret-trailers --if-exists replace \
         --trailer "AW-Parent-Run-Id: ${parent_run_id}" --in-place "$msg_file"
+else
+    # Root run (or malformed id): clear a parent trailer inherited from an
+    # amended child-run commit so it cannot contradict the new AW-Run-Id.
+    # (replace with an empty value, then --trim-empty drops it.)
+    git interpret-trailers --if-exists replace --trim-empty \
+        --trailer "AW-Parent-Run-Id:" --in-place "$msg_file"
 fi
