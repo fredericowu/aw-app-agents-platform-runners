@@ -415,3 +415,20 @@ def test_every_shipped_hook_is_executable_and_posix_sh(name):
     assert os.access(path, os.X_OK), f"{name} is not executable"
     check = subprocess.run(["sh", "-n", str(path)], capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
+
+
+def test_warm_turn_env_agent_slug_wins_over_stale_baked_env(tmp_path):
+    """turn_env carries this turn's slug; the container's baked env is older."""
+    repo = _init_repo(tmp_path)
+    warm_dir = tmp_path / "warm"
+    warm_dir.mkdir()
+    (warm_dir / "current_run_id").write_text("turnrun")
+    (warm_dir / "turn_env").write_text("export AW_AGENT_SLUG='turn-coder'\n")
+
+    result = _commit(repo, tmp_path, "a.txt", "s1", AW_WARM_DIR=str(warm_dir),
+                     AW_RUN_ID="baked", AW_AGENT_SLUG="baked-coder")
+
+    assert result.returncode == 0, result.stderr
+    msg = _last_message(repo, tmp_path)
+    assert "AW-Agent-Slug: turn-coder" in msg
+    assert "baked-coder" not in msg

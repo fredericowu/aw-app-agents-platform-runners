@@ -3425,7 +3425,8 @@ def _dispatch_warm_turn(client, job: dict, redis_url: str, r=None) -> None:
     warm_pool.dispatch_turn(
         client=client, name=name, run_id=run_id, prompt=prompt, cli=cli,
         notion_task_id=job.get("notion_task_id"), source_device=job.get("source_device"),
-        parent_run_id=job.get("parent_run_id"), agent_model=agent_model,
+        parent_run_id=job.get("parent_run_id"), agent_slug=job.get("agent_slug"),
+        agent_model=agent_model,
         # A raw turn is a CLI slash command and must reach the container at
         # position 0 — see _with_claude_turn_context. Absent on an older
         # caller's job, which reads as False and keeps the old behaviour.

@@ -110,3 +110,18 @@ def test_turn_env_exports_empty_aw_parent_run_id_when_absent():
     # assert there's no real id text, not an exact quoted-empty-string match.
     assert "export AW_PARENT_RUN_ID=" in parent_line
     assert "parent-run" not in parent_line
+
+
+def test_turn_env_exports_agent_slug_when_present_and_omits_it_when_absent():
+    client, container = _fake_client_and_container()
+    warm_pool.dispatch_turn(
+        client=client, name="aw-warm-agent-session", run_id="r1", prompt="hi",
+        cli="claude", agent_slug="turn-coder",
+    )
+    assert "export AW_AGENT_SLUG=turn-coder" in container.exec_run.call_args[0][0][2]
+
+    client, container = _fake_client_and_container()
+    warm_pool.dispatch_turn(
+        client=client, name="aw-warm-agent-session", run_id="r1", prompt="hi", cli="claude",
+    )
+    assert "AW_AGENT_SLUG" not in container.exec_run.call_args[0][0][2]
