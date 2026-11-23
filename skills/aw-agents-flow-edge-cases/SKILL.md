@@ -170,3 +170,7 @@ agent handed off internally (Architect → Coder → QA) instead of concluding
 the flow itself, and the Source was then never told the flow finished,
 `need_human` verdicts included. Now keyed off the WATCHED run's flow, so a
 Source gets its flow-done wake-up like any in-flow hop.
+
+## Restarting or updating a workspace
+
+Use `update_workspace` (not a hand `restart core`) so in-flight runs drain and held fires replay. If it returns a lock id, end your turn and wait for the outcome wake-up; if it returns an error, handle it in the current turn. See the `aw-workspace-restart` skill for the failure outcomes.
