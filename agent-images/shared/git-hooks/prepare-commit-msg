@@ -70,22 +70,22 @@ fi
 # whole life, so unlike the run id this needs no per-turn refresh.
 session_id="${AW_SESSION_ID:-}"
 
-# Stable per (agent, session) too — a warm container is keyed on agent_id as
-# well as session_id, so the slug cannot change mid-container. Read before
-# turn_env sourcing below, same as session_id, so a future turn_env key
-# never shadows it.
-agent_slug="${AW_AGENT_SLUG:-}"
-
 # turn_env is rewritten every turn by warm_pool.dispatch_turn and is
 # authoritative over whatever NOTION_TASK_ID this container's env was
 # created with, which goes stale on turn 2+ of a reused warm container
 # exactly like current_run_id above. Sourcing it is safe here: it only ever
 # re-exports AW_RUN_ID/NOTION_TASK_ID/AW_SOURCE_DEVICE/
-# AW_PARENT_RUN_ID/AW_GATEWAY_BEARER_TOKEN, and run_id was already resolved above.
+# AW_PARENT_RUN_ID/AW_AGENT_SLUG/AW_GATEWAY_BEARER_TOKEN, and run_id was already resolved above.
 if [ -f "$warm_dir/turn_env" ]; then
     . "$warm_dir/turn_env"
 fi
 card_id="${NOTION_TASK_ID:-}"
+
+# The agent's slug: warm_pool.dispatch_turn re-exports it in turn_env, so it is
+# resolved AFTER sourcing like card_id and the turn's value wins over the
+# container's baked env; with no turn_env (cold/ephemeral container, older
+# runner) the baked $AW_AGENT_SLUG stands.
+agent_slug="${AW_AGENT_SLUG:-}"
 
 # The dispatching run's id, resolved AFTER turn_env like card_id: it is per
 # turn (a warm container's baked env goes stale), and a root turn's turn_env

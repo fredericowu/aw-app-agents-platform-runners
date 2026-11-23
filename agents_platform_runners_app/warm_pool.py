@@ -808,6 +808,7 @@ def dispatch_turn(*, client, name: str, run_id: str, prompt: str, cli: str = "cl
                   notion_task_id: str | None = None,
                   source_device: str | None = None,
                   parent_run_id: str | None = None,
+                  agent_slug: str | None = None,
                   agent_model: str | None = None,
                   raw_prompt: bool = False,
                   gateway_bearer_token: str | None = None) -> None:
@@ -857,6 +858,9 @@ def dispatch_turn(*, client, name: str, run_id: str, prompt: str, cli: str = "cl
         f"export AW_RUN_ID={_sh(run_id)}\nexport NOTION_TASK_ID={_sh(notion_task_id)}\n"
         f"export AW_SOURCE_DEVICE={_sh(source_device)}\nexport AW_PARENT_RUN_ID={_sh(parent_run_id)}\n"
     )
+    if agent_slug:
+        # The prepare-commit-msg hook resolves AW-Agent-Slug from here first.
+        turn_env += f"export AW_AGENT_SLUG={_sh(agent_slug)}\n"
     if gateway_bearer_token:
         # Must match execute.py's CODEX_GATEWAY_TOKEN_ENV_VAR — see this
         # function's own docstring on why it rides in here, per turn.
