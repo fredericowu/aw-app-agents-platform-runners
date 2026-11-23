@@ -355,7 +355,7 @@ def test_a_bare_timeout_on_one_cards_move_does_not_abort_the_whole_batch(monkeyp
     assert board.moves == [("p2", "done")]
 
 
-def test_rollback_after_a_prior_deployed_verdict_goes_to_need_human(monkeypatch):
+def test_rollback_after_a_prior_deployed_verdict_stays_put_for_manager_routing(monkeypatch):
     _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.1", "error": None})
     board = FakeBoard({"p1": _card(QAStatus="")})  # not done -> moved_testing, stays put
     dr.check_deployed(board, max_cards=10)
@@ -364,7 +364,8 @@ def test_rollback_after_a_prior_deployed_verdict_goes_to_need_human(monkeypatch)
     # Observed version drops back below target -> rollback.
     _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.0", "error": None})
     dr.check_deployed(board, max_cards=10)
-    assert board.moves[-1] == ("p1", "need_human")
+    assert ("p1", "need_human") not in board.moves
+    assert board.moves == [("p1", "Testing")]
 
 
 def test_rerun_with_no_change_is_a_no_op(monkeypatch):
@@ -880,7 +881,7 @@ def test_rolled_back_card_is_never_reminder_due(monkeypatch):
     dr.check_deployed(board, max_cards=10)  # moves to Testing
     _patch_observe(monkeypatch, "app", {"workspace": "aw", "observed": "v0.35.0", "error": None})
     result = dr.check_deployed(board, max_cards=10)  # rollback
-    row = result["moved"][0]
+    row = result["still_waiting"][0]
     assert row["verdict"] == "rolled_back"
     assert row["reminder_due"] is False
 

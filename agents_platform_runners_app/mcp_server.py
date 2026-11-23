@@ -928,7 +928,7 @@ async def _list_tools() -> list[Tool]:
                           "(can't observe via any of the three tiers, e.g. "
                           "unreachable or non-semver) -> NEVER moves the card, 3 consecutive "
                           "unknowns escalate to Need Human; rolled_back (observed version "
-                          "dropped below a previously-deployed target) -> Need Human; invalid "
+                          "dropped below a previously-deployed target) -> stays put, reported for the Manager to route to the delivering coder; invalid "
                           "(empty/malformed DeployComponent, or empty DeployToVersion outside "
                           "the 'none' sentinel) -> skipped, commented once.\n\n"
                           "Returns the COMPLETE lane picture every call, not just actions "
