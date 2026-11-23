@@ -32,6 +32,8 @@ def _env(monkeypatch):
     monkeypatch.setenv("AW_WORKSPACE_BOOT_ID", "boot-1")
     monkeypatch.setenv("AW_WORKSPACE_GIT_HEAD", "abc123")
     monkeypatch.setenv("AW_WORKSPACE_VERSION", "v9")
+    monkeypatch.setattr(lc, "_ping_redis", lambda url: None)
+    monkeypatch.setattr(lc, "_ping_container_engine", lambda path: None)
 
 
 def _fake_readiness(monkeypatch, status):
@@ -128,6 +130,41 @@ def test_healthy_cannot_execute_without_redis(monkeypatch):
     assert _client().get("/healthy", headers=H).json()["ready"] is False
 
 
+def _boom(*_a):
+    raise ConnectionError("refused")
+
+
+def test_healthy_configured_but_unreachable_redis_is_not_ready(monkeypatch):
+    _fake_readiness(monkeypatch, OK)
+    monkeypatch.setattr(lc, "_ping_redis", _boom)
+    b = _client().get("/healthy", headers=H).json()
+    assert b["ready"] is False and b["can_execute"] is False
+    assert any(n["reason"] == "shared_redis_unreachable" for n in b["not_ready"])
+
+
+def test_healthy_configured_but_dead_container_engine_is_not_ready(monkeypatch):
+    _fake_readiness(monkeypatch, OK)
+    monkeypatch.setattr(lc, "_ping_container_engine", _boom)
+    b = _client().get("/healthy", headers=H).json()
+    assert b["ready"] is False
+    assert any(n["reason"] == "container_engine_unreachable" for n in b["not_ready"])
+
+
+def test_restart_leading_hyphen_id_is_one_token(monkeypatch):
+    calls: list = []
+    _cli(monkeypatch, {"ok": True, "status": "dispatched"}, calls=calls)
+    r = _client().post("/lifecycle/restart", headers=H, json={"request_id": "-lock"})
+    assert r.status_code == 202
+    assert "--request-id=-lock" in calls[0] and "-lock" not in calls[0]
+
+
+def test_restart_unstartable_cli_is_structured_503(monkeypatch):
+    monkeypatch.setenv(lc.CLI_ENV, "/nonexistent/cli")
+    r = _client().post("/lifecycle/restart", headers=H, json={"request_id": "k"})
+    assert r.status_code == 503 and r.json()["status"] == "cli_unavailable"
+    assert r.json()["accepted"] is False
+
+
 def test_healthy_standalone_skips_gateway():
     b = _client(runtime_provider=None).get("/healthy", headers=H).json()
     assert b["ready"] is True and b["gateway"]["checked"] is False
@@ -174,7 +211,7 @@ def test_restart_dispatched_passes_cli_object_through(monkeypatch):
     r = _client().post("/lifecycle/restart", headers=H, json={"request_id": "lock-1"})
     assert r.status_code == 202
     assert r.json() == {**obj, "accepted": True, "request_id": "lock-1"}
-    assert calls == [["/bin/fake-cli", "restart", "core", "--request-id", "lock-1", "--json"]]
+    assert calls == [["/bin/fake-cli", "restart", "core", "--request-id=lock-1", "--json"]]
     assert "--wait" not in calls[0]
 
 

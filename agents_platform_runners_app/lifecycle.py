@@ -81,20 +81,61 @@ def active_jobs() -> int:
                if t.name.startswith("runner-exec-") and t.is_alive())
 
 
-def can_execute(cfg: dict) -> dict[str, Any]:
-    """The three preconditions ``/execute`` enforces, evaluated without
-    dispatching anything. ``reasons`` names each failing one."""
+PROBE_TIMEOUT_S = 3.0
+
+
+def _ping_redis(url: str) -> None:
+    import redis
+    client = redis.Redis.from_url(url, socket_connect_timeout=PROBE_TIMEOUT_S,
+                                  socket_timeout=PROBE_TIMEOUT_S)
+    try:
+        client.ping()
+    finally:
+        client.close()
+
+
+def _ping_container_engine(socket_path: str) -> None:
+    import docker as docker_sdk
+    client = docker_sdk.DockerClient(base_url="unix://" + socket_path,
+                                     timeout=PROBE_TIMEOUT_S)
+    try:
+        client.ping()
+    finally:
+        client.close()
+
+
+async def can_execute(cfg: dict) -> dict[str, Any]:
+    """The preconditions ``/execute`` needs, each actually PROBED (bounded):
+    a configured-but-unreachable Redis or container engine must not read as
+    ready, or held runs are released into a workspace that cannot spawn
+    containers or publish events. ``reasons`` names each failing one."""
     reasons: list[str] = []
     if not cfg.get("execute_secret"):
         reasons.append("execute_secret_not_configured")
     try:
-        if not shared_redis.resolve(cfg):
-            reasons.append("shared_redis_not_resolved")
+        url = shared_redis.resolve(cfg)
     except Exception as exc:  # noqa: BLE001 - the failure is the finding
         log.warning("healthy: shared redis resolve failed: %s", exc)
-        reasons.append("shared_redis_error")
+        url, reasons = None, reasons + ["shared_redis_error"]
+    else:
+        if not url:
+            reasons.append("shared_redis_not_resolved")
+    if url:
+        try:
+            await asyncio.wait_for(asyncio.to_thread(_ping_redis, url), PROBE_TIMEOUT_S + 2)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("healthy: shared redis ping failed: %s", exc)
+            reasons.append("shared_redis_unreachable")
     if not execute_mod.CONTAINER_SOCKET:
         reasons.append("container_socket_not_set")
+    else:
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_ping_container_engine, execute_mod.CONTAINER_SOCKET),
+                PROBE_TIMEOUT_S + 2)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("healthy: container engine ping failed: %s", exc)
+            reasons.append("container_engine_unreachable")
     return {"ok": not reasons, "reasons": reasons}
 
 
@@ -142,7 +183,7 @@ def _gateway_unavailable(why: str) -> dict[str, Any]:
 
 
 async def healthy_payload(cfg: dict, runtime_provider: Callable[[], Any] | None) -> dict:
-    exec_state = can_execute(cfg)
+    exec_state = await can_execute(cfg)
     gateway = await gateway_state(runtime_provider)
     not_ready: list[dict] = [
         {"kind": "can_execute", "server": None, "app": None, "reason": r}
@@ -204,8 +245,14 @@ async def restart_core(request_id: Any, *, runner: Runner | None = None) -> tupl
         return 503, {"accepted": False, "ok": False, "status": "cli_unavailable",
                      "request_id": request_id,
                      "error": f"{CLI_DEFAULT} not found on PATH (set {CLI_ENV})"}
-    code, out, err = await (runner or _run_cli)(
-        [cli, "restart", "core", "--request-id", request_id, "--json"], CLI_TIMEOUT_S)
+    # ``--request-id=X`` as ONE token: ids may start with "-", which argparse
+    # rejects as a separate value ("expected one argument").
+    try:
+        code, out, err = await (runner or _run_cli)(
+            [cli, "restart", "core", f"--request-id={request_id}", "--json"], CLI_TIMEOUT_S)
+    except OSError as exc:  # missing/non-executable AW_WORKSPACE_CLI
+        return 503, {"accepted": False, "ok": False, "status": "cli_unavailable",
+                     "request_id": request_id, "error": f"could not start {cli}: {exc}"}
     obj = _parse_cli_object(out)
     if obj is None:
         return 502, {"accepted": False, "ok": False, "status": "cli_failed",
