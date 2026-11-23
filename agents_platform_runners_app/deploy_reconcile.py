@@ -844,7 +844,7 @@ def check_deployed(board: "kanban_dispatch.BoardClient", *, page_id: str | None 
                     row["action"] = "moved_done"
                     moved_entry = {"previous_status": row["status"], "new_status": "Done"}
             elif verdict == "invalid":
-                if not row.pop("already_reported", False):
+                if not row.get("already_reported", False):
                     board.add_comment(pid, "🤖 kanban_check_deployed: invalid — " + "; ".join(
                         row.get("reasons", [])))
                     mark_invalid_commented(board, pid)

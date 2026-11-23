@@ -138,12 +138,16 @@ def _patch_observe(monkeypatch, klass: str, result: dict):
 
 def test_invalid_component_is_skipped_and_commented_once(monkeypatch):
     board = FakeBoard({"p1": _card(DeployComponent="")})
-    result = dr.check_deployed(board, max_cards=10)
+    result = dr.check_deployed(board, dry_run=False)
     assert result["still_waiting"][0]["verdict"] == "invalid"
+    # First detection: Manager routes (already_reported False), one comment.
+    assert result["still_waiting"][0]["already_reported"] is False
     assert len(board.comments) == 1
     # Re-run: already reported, no second comment.
-    result2 = dr.check_deployed(board, max_cards=10)
+    result2 = dr.check_deployed(board, dry_run=False)
     assert result2["still_waiting"][0]["verdict"] == "invalid"
+    # Signal for the Manager to skip repeat routing.
+    assert result2["still_waiting"][0]["already_reported"] is True
     assert len(board.comments) == 1
     assert not board.moves
 
