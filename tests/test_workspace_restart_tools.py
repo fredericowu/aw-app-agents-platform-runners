@@ -147,3 +147,12 @@ def test_restart_only_null_is_default(monkeypatch):
 
     _call(monkeypatch, handler, "update_workspace", {"reason": "r", "restart_only": None})
     assert seen["b"]["restart_only"] is False
+
+
+@pytest.mark.parametrize("name", ["workspace_restart_status", "cancel_workspace_restart"])
+def test_status_cancel_503_is_not_reported_as_feature_off(monkeypatch, name):
+    out = _call(monkeypatch, lambda _r: httpx.Response(503, text="upstream down"),
+                name, {"lock_id": "L1"})
+    assert out["status"] == 503
+    assert "not enabled" not in out["message"]
+    assert "upstream down" in out["message"]

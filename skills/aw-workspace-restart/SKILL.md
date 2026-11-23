@@ -11,7 +11,7 @@ Three MCP tools on the agents-platform-runners server:
 - `workspace_restart_status(lock_id)` — read the lock: `phase`, `outcome`, `failure_report`, `in_flight_run_ids`, `expires_at`, `checks_done`.
 - `cancel_workspace_restart(lock_id)` — release the lock now; held fires replay immediately.
 
-If the feature is off on this deployment, `update_workspace` returns a 503 "not enabled" error and nothing happens. Fall back to the manual path below.
+If the feature is off on this deployment, `update_workspace` returns a 503 "not enabled" error and nothing happens. A 503 from `workspace_restart_status` or `cancel_workspace_restart` is NOT that: those routes stay enabled, so it is a service outage and you cannot tell whether a cancel took effect; re-read the status before assuming either way. Fall back to the manual path below.
 
 ## When to use which
 
@@ -19,7 +19,7 @@ If the feature is off on this deployment, `update_workspace` returns a 503 "not 
   - `restart_only=false` (default): the same update the aw-console Update button runs (latest release, recreate, verify).
   - `restart_only=true`: restart the core only, no update.
 - **Restart core by hand** (`aw-workspace-cli restart core`) only when the feature is off, or the workspace is already down and there is nothing to drain. A manual restart from inside a run kills that run and every other run on the workspace, with no hold and no report.
-- Any workspace of your own tenant is allowed (`workspace` defaults to the one you run on). Another tenant's is refused (403 `cross_tenant`).
+- Any workspace of your own tenant is allowed (`workspace` defaults to the one you run on). A workspace outside your own tenant is refused: `update_workspace` answers 400 when the target is not in your registered workspace list, `workspace_restart_status` / `cancel_workspace_restart` answer 404 for a lock that is not yours, and the downstream update dispatch can still refuse with 403 `cross_tenant` (it then shows up as a `dispatch_refused` report).
 
 ## How it behaves
 
