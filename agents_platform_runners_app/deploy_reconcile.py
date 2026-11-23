@@ -862,13 +862,10 @@ def check_deployed(board: "kanban_dispatch.BoardClient", *, page_id: str | None 
                     row["action"] = "needs_human"
                     moved_entry = {"previous_status": row["status"], "new_status": "Need Human"}
             elif verdict == "rolled_back":
-                if row["status"] != "Need Human":
-                    board.move(pid, "need_human", comment=(
-                        "🤖 kanban_check_deployed: rollback detected — the observed "
-                        "version dropped below a previously-deployed target.\n\n"
-                        + _evidence(row)))
-                    row["action"] = "needs_human"
-                    moved_entry = {"previous_status": row["status"], "new_status": "Need Human"}
+                # Reported only: the card stays put so the Manager can route
+                # it to the coder that delivered it (Need Human is for a wall,
+                # not for a rollback an agent can fix). Evidence is in the row.
+                pass
             elif verdict == "deployed":
                 if qa_status.strip().lower() == "done":
                     if row["status"] != "Done":
