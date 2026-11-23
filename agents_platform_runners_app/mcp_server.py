@@ -3396,8 +3396,13 @@ async def _workspace_restart_tool(c: httpx.AsyncClient, name: str, args: dict) -
         reason = (args.get("reason") or "").strip()
         if not reason:
             return _err(400, "reason is required — one short line on why the workspace is being updated/restarted")
+        restart_only = args.get("restart_only")
+        if restart_only is None:
+            restart_only = False
+        if not isinstance(restart_only, bool):
+            return _err(400, "restart_only must be a boolean")
         body: dict[str, Any] = {"caller_run_id": own_run_id,
-                                "restart_only": bool(args.get("restart_only")),
+                                "restart_only": restart_only,
                                 "reason": reason}
         if (ws := (args.get("workspace") or "").strip()):
             body["workspace"] = ws

@@ -127,3 +127,23 @@ def test_no_caller_run(monkeypatch):
     out = _call(monkeypatch, lambda _r: httpx.Response(200, json={}),
                 "update_workspace", {"reason": "r"})
     assert out["status"] == 400
+
+
+@pytest.mark.parametrize("val", ["false", "true", 0, 1, "", []])
+def test_restart_only_must_be_boolean(monkeypatch, val):
+    def handler(_r):
+        raise AssertionError("no HTTP expected")
+
+    out = _call(monkeypatch, handler, "update_workspace", {"reason": "r", "restart_only": val})
+    assert out["status"] == 400 and "boolean" in out["message"]
+
+
+def test_restart_only_null_is_default(monkeypatch):
+    seen = {}
+
+    def handler(req):
+        seen["b"] = json.loads(req.content)
+        return httpx.Response(200, json={})
+
+    _call(monkeypatch, handler, "update_workspace", {"reason": "r", "restart_only": None})
+    assert seen["b"]["restart_only"] is False
