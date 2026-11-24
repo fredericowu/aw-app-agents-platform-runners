@@ -283,6 +283,15 @@ provenance intact.
 
 ## Handing off to QA
 
+**QA is opt-in. The default is no QA.** Dispatch QA only when the card
+carries the tag `qa-required` (read the card's Tags). QA tests behaviour from
+outside (an API, a UI flow, a CLI, a deployed component) against the card's
+acceptance criteria; it does not review code, and the review pipeline and CI
+have already done that. Otherwise finish yourself, after the merge and the
+deploy check, with `mark_flow_done(outcome="success", qa_not_needed=true,
+summary=...)`, putting the merge commit and the deploy evidence in the summary.
+The rest of this section applies only to a `qa-required` card.
+
 **QA reviews MERGED work only.** A review of an open PR verifies claims about
 code that can still change under it, and it burns a full review pass to do
 it — on 2026-11-04 both failure modes happened live on one afternoon's
