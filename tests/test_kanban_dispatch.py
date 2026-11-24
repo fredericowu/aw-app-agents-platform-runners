@@ -764,7 +764,7 @@ class HandoffBoard(FakeBoard):
 
 
 class HandoffPlatform(FakePlatform):
-    def __init__(self, source_slug="qa", *, ambiguous=False):
+    def __init__(self, source_slug="architect", *, ambiguous=False):
         self.runs = [{"id": "source", "source_slug": source_slug, "workspace": "aw",
                       "target_slug": "some-target", "status": "running"}]
         self.ambiguous = ambiguous
@@ -790,7 +790,7 @@ def _handoff(board, platform, *, revision="abc123"):
 
 def test_mobile_rework_reconciles_timeout_and_replays_against_sweeper():
     async def scenario():
-        board = HandoffBoard()
+        board = HandoffBoard(agent_slug="architect")
         platform = HandoffPlatform(ambiguous=True)
         accepted, sweep, competing = await asyncio.gather(
             _handoff(board, platform), kd.sweep_ready(board, platform), _handoff(board, platform))
@@ -815,7 +815,7 @@ def test_mobile_rework_reconciles_timeout_and_replays_against_sweeper():
 def test_coder_uses_direct_qa_dispatch_instead_of_board_handoff():
     board = HandoffBoard()
     platform = HandoffPlatform("coder")
-    with pytest.raises(ValueError, match="Only the card's QA or Architect"):
+    with pytest.raises(ValueError, match="Only the card's Architect"):
         asyncio.run(_handoff(board, platform))
     assert not platform.dispatched
     assert not board.writes
@@ -840,22 +840,106 @@ def test_handoff_keeps_concurrent_recipient_gate():
 
 
 
-def test_post_deployment_qa_rework_returns_testing_card_to_implementation():
-    board = HandoffBoard(status="Testing")
-    platform = HandoffPlatform()
-    receipt = asyncio.run(_handoff(board, platform))
-    assert receipt["run_id"] == "run-1"
-    assert board.moves == [("page-1", "running")]
+def test_qa_cannot_hand_a_card_back_to_a_coder():
+    board = HandoffBoard()
+    platform = HandoffPlatform("qa-sonnet")
+    with pytest.raises(ValueError, match="report_qa_findings"):
+        asyncio.run(_handoff(board, platform))
+    assert not platform.dispatched
+    assert not board.writes
 
 
-def test_rejected_post_deployment_handoff_restores_testing_lane():
-    class RejectingPlatform(HandoffPlatform):
-        async def dispatch(self, path, payload):
-            return "", "HTTP 422", True
 
-    board = HandoffBoard(status="Testing")
-    board.props[kd.RUN_ID_PROPERTY] = "source"
-    receipt = asyncio.run(_handoff(board, RejectingPlatform()))
-    assert receipt == {"ok": False, "reason": "HTTP 422"}
-    assert board.moves == [("page-1", "running"), ("page-1", "Testing")]
-    assert board.props[kd.RUN_ID_PROPERTY] == "source"
+# ── report_qa_findings: QA closes the card, never hands it back ─────────
+
+class QABoard(FakeBoard):
+    def __init__(self):
+        super().__init__(card={"status": "Testing", "target_slug": "some-target",
+                               "comments_md": ""})
+        self.comments = []
+        self.filed = []
+
+    def move(self, page_id, status, comment=""):
+        self.comments.append(comment)
+        self._card["comments_md"] += comment
+        return super().move(page_id, status)
+
+    def qa_findings(self, **kw):
+        self.filed.append(kw)
+        return {"ok": True, "findings_url": "https://notion.so/findings-1",
+                "findings_page_id": "findings-1", "added": len(kw["findings"])}
+
+
+class QAPlatform(HandoffPlatform):
+    def __init__(self, source_slug="qa-sonnet"):
+        super().__init__(source_slug)
+        self.woken = []
+
+    async def return_to_caller(self, run_id, message):
+        self.woken.append((run_id, message))
+        return {"ok": True}
+
+
+ISSUE = {"title": "POST /x returns 500", "severity": "major",
+         "evidence": "curl -X POST /x -> 500, expected 201"}
+
+
+def _report(board, platform, **over):
+    kw = dict(source_id="source", page_id="page-1", verdict="issues", revision="abc123",
+              summary="exercised the API", findings=[ISSUE])
+    kw.update(over)
+    return asyncio.run(kd.report_qa_findings(board, platform, **kw))
+
+
+def test_issues_file_the_finding_close_the_card_and_wake_the_caller_without_dispatching():
+    board, platform = QABoard(), QAPlatform()
+    receipt = _report(board, platform)
+    assert receipt["card_status"] == "done" and receipt["findings_card"].endswith("findings-1")
+    assert board.filed[0]["target_slug"] == "some-target"
+    assert board.filed[0]["findings"] == [ISSUE]
+    assert board.props["QAStatus"] == "issues"
+    assert board.moves == [("page-1", "done")]
+    assert "POST /x returns 500" in board.comments[0]
+    assert not platform.dispatched, "QA must never dispatch a Coder"
+    assert platform.woken and "POST /x returns 500" in platform.woken[0][1]
+
+
+def test_pass_closes_the_card_without_touching_the_findings_card():
+    board, platform = QABoard(), QAPlatform()
+    receipt = _report(board, platform, verdict="passed", findings=[], pass_status="ready_to_deploy")
+    assert receipt["card_status"] == "ready_to_deploy"
+    assert board.props["QAStatus"] == "ready_to_deploy"
+    assert not board.filed
+
+
+def test_a_replay_of_the_same_verdict_files_nothing_twice():
+    board, platform = QABoard(), QAPlatform()
+    _report(board, platform)
+    again = _report(board, platform)
+    assert again["reused"] is True
+    assert len(board.filed) == 1 and len(board.comments) == 1
+
+
+def test_issues_without_runtime_evidence_are_refused():
+    board, platform = QABoard(), QAPlatform()
+    with pytest.raises(ValueError, match="could not reproduce"):
+        _report(board, platform, findings=[{"title": "looks risky", "evidence": ""}])
+    assert not board.filed and not board.moves
+
+
+def test_only_a_qa_run_can_report_findings():
+    board, platform = QABoard(), QAPlatform("coder")
+    with pytest.raises(ValueError, match="Only the card's QA run"):
+        _report(board, platform)
+    assert not board.filed and not board.moves
+
+
+def test_a_failed_wake_does_not_undo_the_recorded_verdict():
+    class Broken(QAPlatform):
+        async def return_to_caller(self, run_id, message):
+            raise RuntimeError("platform down")
+
+    board = QABoard()
+    receipt = _report(board, Broken())
+    assert receipt["ok"] is True and receipt["wake"]["ok"] is False
+    assert board.moves == [("page-1", "done")]

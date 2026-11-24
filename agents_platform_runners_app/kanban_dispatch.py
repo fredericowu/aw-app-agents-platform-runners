@@ -246,6 +246,16 @@ class BoardClient:
             raise BoardUnavailable(result.get("error") or "board refused the property write")
         return result
 
+    def qa_findings(self, *, target_slug: str, page_id: str, revision: str,
+                    findings: list[dict], summary: str = "") -> dict:
+        """File QA findings on the target's findings card (create or reuse)."""
+        result = self._request("POST", f"{NOTION_PREFIX}/kanban/qa-findings", {
+            "target_slug": target_slug, "page_id": page_id, "revision": revision,
+            "findings": findings, "summary": summary})
+        if isinstance(result, dict) and result.get("ok") is False:
+            raise BoardUnavailable(result.get("error") or "board refused the QA findings")
+        return result
+
     def need_attention(self, *, limit: int = 10, reping: bool = True) -> dict:
         """``GET /kanban/cards-need-attention`` — the live F′ REST route
         (sync headless wrapper over aw-app-notion's own
@@ -454,6 +464,15 @@ class PlatformClient:
             raise RuntimeError(f"Card-bound run lookup failed for {page_id} (HTTP {resp.status_code})")
         return resp.json() or []
 
+    async def return_to_caller(self, run_id: str, message: str) -> dict:
+        """Wake whoever dispatched ``run_id``. A no-op on the platform side when
+        the run already has ``call_me_back``, since that path delivers on finish."""
+        resp = await self._c.post(f"{self._base}/api/runs/{run_id}/return-to-caller",
+                                  json={"message": message, "kind": "result"})
+        if resp.status_code != 200:
+            return {"ok": False, "reason": f"HTTP {resp.status_code}"}
+        return resp.json() or {}
+
     async def validate_agent(self, slug: str, *, setting: str = "AgentSlug") -> None:
         workspace = _this_workspace()
         label = f"{setting}={slug!r} in workspace {workspace!r}"
@@ -642,7 +661,10 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
 
 async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_id: str,
                        page_id: str, revision: str, evidence: str) -> dict:
-    """Transfer an in-progress card from its active QA or Architect run.
+    """Transfer an in-progress card from its active Architect run.
+
+    QA never hands a card back: it records its outcome with
+    ``report_qa_findings`` and the card closes either way.
 
     The source is the only active run exempted. The shared dispatch lock
     serializes this transition with manual and scheduled Ready dispatch.
@@ -662,15 +684,16 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
         if not source or source.get("workspace") != _this_workspace():
             raise ValueError("Caller must be a work run bound to this card and workspace")
         slug = source.get("source_slug") or ""
-        qa = slug == "qa" or slug.startswith("qa-")
-        architect = slug == "architect" or slug.startswith("architect-")
-        if not (qa or architect):
-            raise ValueError("Only the card's QA or Architect run can use this handoff")
+        if slug == "qa" or slug.startswith("qa-"):
+            raise ValueError("QA does not hand cards back to a Coder: record the outcome with "
+                             "report_qa_findings; findings go to the target's findings card")
+        if not (slug == "architect" or slug.startswith("architect-")):
+            raise ValueError("Only the card's Architect run can use this handoff")
 
         target = source.get("target_slug")
         if not target:
             raise ValueError("Caller has no target")
-        stage = "qa-rework" if qa else "architect-build"
+        stage = "architect-build"
         key = hashlib.sha256(json.dumps([page_id, target, stage, revision]).encode()).hexdigest()
         marker = f"Kanban handoff {key}"
         token = f"handoff:{key}"
@@ -708,8 +731,7 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
 
         card = await asyncio.to_thread(board.card, page_id)
         card_status = card.get("status")
-        testing = qa and card_status == "Testing"
-        if (card_status != "In Progress" and not testing) or card.get("target_slug") != target:
+        if card_status != "In Progress" or card.get("target_slug") != target:
             return {"ok": False, "reason": "expected-active-card-on-source-target"}
         selected = (card.get("agent_slug") or "").strip()
         if selected == slug or selected in ("qa", "architect") or selected.startswith(("qa-", "architect-")):
@@ -740,12 +762,8 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
             await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, stamp or "")
             raise
 
-        if testing:
-            await asyncio.to_thread(board.move, page_id, "running")
         run_id, error, rejected = await platform.dispatch(path, payload)
         if rejected:
-            if testing:
-                await asyncio.to_thread(board.move, page_id, card_status)
             await asyncio.to_thread(board.set_property, page_id, RUN_ID_PROPERTY, stamp or "")
             return {"ok": False, "reason": error}
         verified = recipient(await platform.card_runs(page_id, limit=100))
@@ -763,6 +781,91 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
         return response
 
 
+QA_VERDICTS = ("passed", "issues")
+QA_PASS_STATUSES = ("done", "ready_to_deploy")
+
+
+def _qa_card_comment(verdict: str, revision: str, summary: str, findings: list[dict],
+                     findings_url: str, marker: str) -> str:
+    lines = [marker,
+             f"QA {'passed' if verdict == 'passed' else 'found issues'} at revision {revision}."]
+    if summary.strip():
+        lines.append(summary.strip())
+    for f in findings:
+        lines.append(f"- [{f.get('severity') or 'minor'}] {f['title']}: {f['evidence']}")
+    if findings_url:
+        lines.append(f"Filed on the target's findings card: [QA findings]({findings_url})")
+    return "\n".join(lines)
+
+
+async def report_qa_findings(board: BoardClient, platform: PlatformClient, *, source_id: str,
+                             page_id: str, verdict: str, revision: str, summary: str = "",
+                             findings: list[dict] | None = None,
+                             pass_status: str = "done") -> dict:
+    """QA's terminal action: record the outcome and close the card.
+
+    ``passed`` stamps the card and moves it to ``pass_status``. ``issues``
+    files each reproduced finding on the target's findings card (one per
+    target, reused across cards), comments on the tested card, stamps
+    QAStatus=issues and moves it to Done. Nothing is dispatched: QA never
+    sends the card back to a Coder. The dispatching channel is woken with the
+    findings once the board is updated.
+    """
+    findings = findings or []
+    if verdict not in QA_VERDICTS:
+        raise ValueError(f"verdict must be one of {QA_VERDICTS}")
+    if pass_status not in QA_PASS_STATUSES:
+        raise ValueError(f"pass_status must be one of {QA_PASS_STATUSES}")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9./:@_-]{0,199}", revision or ""):
+        raise ValueError("A stable reviewed revision is required")
+    if verdict == "issues" and not any(
+            isinstance(f, dict) and str(f.get("title") or "").strip()
+            and str(f.get("evidence") or "").strip() for f in findings):
+        raise ValueError("verdict 'issues' needs at least one finding with a title and runtime "
+                         "evidence; a suspicion you could not reproduce is not a finding")
+
+    runs = await platform.card_runs(page_id, limit=5000)
+    source = next((run for run in runs if run["id"] == source_id), None)
+    if not source or source.get("workspace") != _this_workspace():
+        raise ValueError("Caller must be a work run bound to this card and workspace")
+    slug = source.get("source_slug") or ""
+    if not (slug == "qa" or slug.startswith("qa-")):
+        raise ValueError("Only the card's QA run can report QA findings")
+    target = source.get("target_slug")
+    if not target:
+        raise ValueError("Caller has no target")
+
+    key = hashlib.sha256(json.dumps([page_id, target, revision, verdict]).encode()).hexdigest()
+    marker = f"QA findings {key[:16]}"
+    card = await asyncio.to_thread(board.card, page_id)
+    if marker in (card.get("comments_md") or ""):
+        return {"ok": True, "reused": True, "page_id": page_id, "verdict": verdict,
+                "revision": revision}
+
+    findings_url = ""
+    filed: dict = {}
+    if verdict == "issues":
+        filed = await asyncio.to_thread(
+            board.qa_findings, target_slug=target, page_id=page_id, revision=revision,
+            findings=findings, summary=summary)
+        findings_url = filed.get("findings_url") or ""
+    clean = [f for f in findings if isinstance(f, dict) and f.get("title") and f.get("evidence")]
+    comment = _qa_card_comment(verdict, revision, summary, clean, findings_url, marker)
+    status = "done" if verdict == "issues" else pass_status
+    await asyncio.to_thread(board.set_property, page_id, "QAStatus",
+                            "issues" if verdict == "issues" else status)
+    await asyncio.to_thread(board.move, page_id, status, comment)
+
+    receipt = {"ok": True, "page_id": page_id, "verdict": verdict, "revision": revision,
+               "card_status": status, "findings_card": findings_url or None,
+               "findings_page_id": filed.get("findings_page_id"), "added": filed.get("added", 0)}
+    try:
+        receipt["wake"] = await platform.return_to_caller(source_id, comment)
+    except Exception as exc:  # a failed wake must not undo a recorded verdict
+        receipt["wake"] = {"ok": False, "reason": str(exc)}
+    return receipt
+
+
 __all__ = ["BoardClient", "BoardUnavailable", "PlatformClient", "build_run_input",
            "dispatch_payload", "resume_payload", "board_base_url", "claim_card",
-           "sweep_ready", "RUN_ID_PROPERTY", "DEFAULT_TARGET_SLUG", "CLAIM_SIDE"]
+           "sweep_ready", "report_qa_findings", "RUN_ID_PROPERTY", "DEFAULT_TARGET_SLUG", "CLAIM_SIDE"]
