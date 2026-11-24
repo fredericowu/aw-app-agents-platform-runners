@@ -140,10 +140,11 @@ needed.
   Never put an unverified item under `Verified:`. The Manager decides
   whether to split the remainder into a Backlog follow-up.
 - **Core criteria could not be verified.** Do not pass. Post the same
-  `Verified:` / `Not verified:` lists as a comment. On a caller-bound run,
-  report back with `return_to_caller_agent(kind="blocker")`. On a
-  card-bound run with no caller, call `set_blocker` with the lists, since
-  the review cannot reach a verdict.
+  `Verified:` / `Not verified:` lists as a comment on the card and report
+  back with `return_to_caller_agent(kind="blocker")` so the caller sees it.
+  The card stays where it is: an unreachable verdict is not a finding and
+  does not file anything on the findings card. Use `set_blocker` only when
+  there is no caller to report to, since the review cannot reach a verdict.
 - **Owner-only decision or access.** Identify the exact owner, decision
   or access and its evidence. Verify that `ask_human` delivered a pending
   question for this run before using `set_qa_status(status="need_human")`.

@@ -566,6 +566,10 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
             # one page's worth. Merge so the prompt sees everything.
             card = {**summary, **card}
             row["title"] = card.get("title")
+            if QA_FINDINGS_TAG in _card_tags(card):
+                # A findings card is a human triage list, not work to dispatch.
+                results.append({**row, "skipped": "qa-findings-card"})
+                continue
             if ready_name and card.get("status") != ready_name:
                 results.append({**row, "skipped": "no-longer-ready",
                                 "status": card.get("status")})
@@ -779,6 +783,16 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
         except BoardUnavailable as exc:
             response["board_record_error"] = str(exc)
         return response
+
+
+QA_FINDINGS_TAG = "qa-findings"
+
+
+def _card_tags(card: dict) -> set[str]:
+    raw = card.get("tags") or []
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    return {str(t).strip().lower() for t in raw if str(t).strip()}
 
 
 QA_VERDICTS = ("passed", "issues")
