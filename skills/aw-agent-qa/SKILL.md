@@ -137,8 +137,16 @@ needed.
   `Verified:` each criterion with its evidence;
   `Not verified:` each criterion with the reason (access, flaky infra,
   which system) and what would be needed to verify it.
-  Never put an unverified item under `Verified:`. The Manager decides
-  whether to split the remainder into a Backlog follow-up.
+  Never put an unverified item under `Verified:`. Then record it with
+  `report_qa_findings(page_id, verdict="issues", revision, summary,
+  findings=[...])`, one finding per `Not verified:` item: `title` is
+  `Not verified: <criterion>`, `severity` is `low`, and `evidence` is the
+  reason it could not be verified plus what would be needed. This is the one
+  case where an unverified item is filed: the card moves to Done, the
+  remainder lands on the target's findings card (Backlog, `qa-findings`) for
+  a human to triage, and nothing stays stuck on this card. Put the
+  `Verified:` list in `summary`. If nothing was verified, use the core
+  criteria branch below instead.
 - **Core criteria could not be verified.** Do not pass. Post the same
   `Verified:` / `Not verified:` lists as a comment on the card and report
   back with `return_to_caller_agent(kind="blocker")` so the caller sees it.

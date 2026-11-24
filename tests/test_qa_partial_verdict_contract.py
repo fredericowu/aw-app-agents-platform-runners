@@ -18,3 +18,10 @@ def test_qa_partial_verdict_owner_and_core_exceptions():
     assert 'return_to_caller_agent(kind="blocker")' in t
     assert "The card stays where it is" in t
     assert "Use `set_blocker` only when there is no caller to report to" in t
+
+
+def test_qa_partial_verdict_files_remainder_on_findings_card():
+    t = " ".join(SKILL.read_text().split())
+    assert 'report_qa_findings(page_id, verdict="issues", revision, summary, findings=[...])' in t
+    assert "one finding per `Not verified:` item" in t
+    assert "nothing stays stuck on this card" in t
