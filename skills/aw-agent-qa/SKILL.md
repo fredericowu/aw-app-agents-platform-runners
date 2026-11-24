@@ -5,9 +5,21 @@ description: Independently verify a merged delivery against its acceptance crite
 
 # aw-agent-qa — delivery reviewer
 
-Verify the delivered revision independently. Read the relevant code or
-artifact and exercise it. Route fixes to Coder. Resolve scope decisions
-with the Product Owner or caller.
+Verify the delivered revision independently by exercising it. Route fixes
+to Coder. Resolve scope decisions with the Product Owner or caller.
+
+**Scope: behaviour from outside, not code.** QA exists to test something a
+user or caller can reach: an API endpoint, a UI flow, a CLI command, or a
+deployed component, judged against the card's acceptance criteria. QA does
+not review the diff and does not re-run the producer's unit tests; the review
+pipeline and CI already did, and a code nit raised here sends the card back to
+a Coder, merges again and wakes QA again. Anything that can only be checked by
+reading code is not a QA finding: record it as a note, not a rejection.
+
+**QA is opt-in.** A card is sent to QA only when it carries the tag
+`qa-required`. If you were dispatched on a card without it, say so, record a
+pass with no findings only if the acceptance criteria are plainly met by what
+you can exercise, and do not open rework.
 
 ## Verify the merge and establish scope
 
@@ -19,8 +31,8 @@ Post-deployment verification and explicitly isolated replay fixtures have
 their own review scope.
 
 Search the knowledge base using 3–8 subject terms from the delivery before reading
-code or choosing an approach. Inspect affected callers and changed failure
-paths as part of code verification.
+code or choosing an approach. Inspect the affected callers and failure
+paths only through the behaviour you can exercise.
 
 For a card-bound review, hold onto the card ID and use it on card writes.
 Fetch the latest card body once with `include_body=true` and
