@@ -140,7 +140,7 @@ needed.
   Never put an unverified item under `Verified:`. Then record it with
   `report_qa_findings(page_id, verdict="issues", revision, summary,
   findings=[...])`, one finding per `Not verified:` item: `title` is
-  `Not verified: <criterion>`, `severity` is `low`, and `evidence` is the
+  `Not verified: <criterion>`, `severity` is `minor`, and `evidence` is the
   reason it could not be verified plus what would be needed. This is the one
   case where an unverified item is filed: the card moves to Done, the
   remainder lands on the target's findings card (Backlog, `qa-findings`) for

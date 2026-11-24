@@ -849,7 +849,13 @@ async def report_qa_findings(board: BoardClient, platform: PlatformClient, *, so
     if not target:
         raise ValueError("Caller has no target")
 
-    key = hashlib.sha256(json.dumps([page_id, target, revision, verdict]).encode()).hexdigest()
+    # A partly-verified report (every finding is a "Not verified:" item) must not share a
+    # dedup identity with a later report of reproduced failures on the same revision.
+    partial = bool(findings) and all(
+        isinstance(f, dict) and str(f.get("title") or "").startswith("Not verified:")
+        for f in findings)
+    key_parts = [page_id, target, revision, verdict] + (["partial"] if partial else [])
+    key = hashlib.sha256(json.dumps(key_parts).encode()).hexdigest()
     marker = f"QA findings {key[:16]}"
     card = await asyncio.to_thread(board.card, page_id)
     if marker in (card.get("comments_md") or ""):

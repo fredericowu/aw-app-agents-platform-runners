@@ -953,3 +953,13 @@ def test_a_failed_wake_does_not_undo_the_recorded_verdict():
     receipt = _report(board, Broken())
     assert receipt["ok"] is True and receipt["wake"]["ok"] is False
     assert board.moves == [("page-1", "done")]
+
+
+def test_partial_report_does_not_swallow_a_later_reproduced_failure_on_same_revision():
+    board, platform = QABoard(), QAPlatform()
+    partial = {"title": "Not verified: UI login", "severity": "minor",
+               "evidence": "browser session got 401; needs an authenticated session"}
+    _report(board, platform, findings=[partial])
+    later = _report(board, platform)
+    assert not later.get("reused")
+    assert len(board.filed) == 2 and board.filed[1]["findings"] == [ISSUE]
