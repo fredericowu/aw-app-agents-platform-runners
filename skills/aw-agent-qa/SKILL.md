@@ -13,8 +13,17 @@ user or caller can reach: an API endpoint, a UI flow, a CLI command, or a
 deployed component, judged against the card's acceptance criteria. QA does
 not review the diff and does not re-run the producer's unit tests; the review
 pipeline and CI already did, and a code nit raised here sends the card back to
-a Coder, merges again and wakes QA again. Anything that can only be checked by
-reading code is not a QA finding: record it as a note, not a rejection.
+a Coder, merges again and wakes QA again. Exercise the accepted behaviour
+through an API request, UI flow, CLI command or deployed component. Diff and
+source review, unit-suite reruns, CI test discovery, speculative edge cases
+and code style are outside QA scope.
+
+**A finding is a reproduced failure.** Rework needs a failure you actually
+triggered against an accepted criterion, with runtime evidence (request and
+response, screenshot, correlated log line or command output). A path you
+suspect from reading code, an edge case nobody asked for, or a check you did
+not run is not a finding. Never send a card back for something you could not
+reproduce.
 
 **QA is opt-in.** A card is sent to QA only when it carries the tag
 `qa-required`. If you were dispatched on a card without it, say so, record a
@@ -30,9 +39,8 @@ has a verdict, establish what warrants another review before repeating it.
 Post-deployment verification and explicitly isolated replay fixtures have
 their own review scope.
 
-Search the knowledge base using 3–8 subject terms from the delivery before reading
-code or choosing an approach. Inspect the affected callers and failure
-paths only through the behaviour you can exercise.
+Search the knowledge base using 3–8 subject terms from the delivery before
+choosing checks. Use runtime evidence from the revision under review.
 
 For a card-bound review, hold onto the card ID and use it on card writes.
 Fetch the latest card body once with `include_body=true` and
@@ -59,9 +67,10 @@ Reuse their contents from session context after the first read.
   deploy, migration or restart. Verify exact merged and deployed versions,
   CI, and the real target. Record any missing rollout step and the evidence
   for deployment properties.
-- **`aw-qa-regression`** applies when a fix relies on a regression test.
-  Run it with the fix, prove it fails with the fix removed in isolation,
-  restore it, and verify CI discovers it.
+- **`aw-qa-regression`** applies when the delivery fixes a reported bug.
+  Replay the reported behaviour through the affected interface on the merged
+  revision and show it no longer occurs. Do not mutation-test the fix or
+  audit its unit tests.
 - **`aw-qa-live-ui`** applies when a UI changes or visual behavior is in
   scope. Exercise the actual interaction in a clean Playwright session.
   Capture screenshot proof after the interaction and attach it with
@@ -71,7 +80,6 @@ Reuse their contents from session context after the first read.
 ## Target diagnostic evidence
 
 Scope run lists to the card, target or session and use a small limit.
-Give CodeGraph the affected symbol names and `maxFiles=4` or fewer.
 Use `get_run_detail` metadata first. Request a small event window with
 `full_record=false`, a limit and relevant event kinds when needed.
 
@@ -83,16 +91,19 @@ Use the original referenced artifact for a historical screenshot.
 
 ## Verify and record evidence
 
-Check each acceptance item directly against the merged artifact or live
-surface. Run relevant tests and check that CI exercises new tests. Review
-changed exception paths for silent failures and useful logging, and check
-for debug leftovers. Attach the test excerpts, reproduction or visual
-evidence that supports each claim. State gaps explicitly. Use the
-`aw-kanban` skill for the board tool reference if needed.
+Check each acceptance item by exercising the merged artifact or live
+surface. Treat the producer's `qa_evidence` as claims to verify
+independently, not as results. Record the revision, environment, steps or
+input, expected and actual result, and one piece of evidence per claim: a
+request/response, screenshot, correlated log line or command output. State
+gaps explicitly. Use the `aw-kanban` skill for the board tool reference if
+needed.
 
 - **Pass.** Call `set_qa_status` once with `done` or `ready_to_deploy`
   according to the actual rollout. Include the reviewed revision and
-  evidence. Verify the resulting card state.
+  evidence. Verify the resulting card state. When the exercised acceptance
+  checks meet expectations, record "pass, no findings", name the checks and
+  cite the observed evidence.
   **Before `ready_to_deploy`:** set `DeployComponent` and
   `DeployToVersion` with `set_kanban_property` (also `DeployEnv` /
   `DeployWorkspaces` when they differ from prod / this workspace), unless the
@@ -101,7 +112,9 @@ evidence that supports each claim. State gaps explicitly. Use the
   `remote-host`, or `none` when nothing needs deploying; `DeployToVersion`
   is an exact `vX.Y.Z` or commit SHA, never `latest`. A card without them is
   `invalid` for `kanban_check_deployed` and never leaves the lane.
-- **Actionable rework.** Call
+- **Actionable rework.** Only a reproduced failure against an accepted
+  criterion, with runtime evidence, qualifies. `Not verified:` entries never
+  trigger Coder rework. Call
   `handoff_kanban_card(page_id, revision, evidence)` on an In Progress or
   Testing card. Supply the full reviewed SHA or stable artifact revision,
   failed criterion, reproduction and expected behavior. Verify the
