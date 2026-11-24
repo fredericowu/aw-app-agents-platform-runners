@@ -16,4 +16,5 @@ def test_qa_partial_verdict_owner_and_core_exceptions():
     assert "use the owner-only procedure below instead" in t
     assert "**Core criteria could not be verified.** Do not pass." in t
     assert 'return_to_caller_agent(kind="blocker")' in t
-    assert "call `set_blocker` with the lists" in t
+    assert "The card stays where it is" in t
+    assert "Use `set_blocker` only when there is no caller to report to" in t

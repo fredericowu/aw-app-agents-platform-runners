@@ -631,6 +631,16 @@ def test_sweep_without_explicit_agent_dispatches_configured_coder():
     assert payload["target_slug"] == "some-target"
 
 
+def test_sweep_never_dispatches_a_qa_findings_card():
+    for tags in (["qa-findings"], "bug, QA-Findings"):
+        board = FakeBoard(cards=[_ready_summary()],
+                          card={"page_id": "p1", "status": "Ready", "tags": tags})
+        platform = FakePlatform()
+        out = _sweep(board, platform)
+        assert out["results"][0]["skipped"] == "qa-findings-card"
+        assert platform.dispatched == [] and board.moves == []
+
+
 def test_dry_run_writes_nothing_at_all():
     board = FakeBoard(cards=[_ready_summary()],
                       card={"page_id": "p1", "status": "Ready"})
