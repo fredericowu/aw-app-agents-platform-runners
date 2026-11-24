@@ -65,7 +65,7 @@ Reuse their contents from session context after the first read.
 
 - **`aw-qa-deployment`** applies when a delivery needs a build, release,
   deploy, migration or restart. Verify exact merged and deployed versions,
-  CI, and the real target. Record any missing rollout step and the evidence
+  rollout status, and the real target. Record any missing rollout step and the evidence
   for deployment properties.
 - **`aw-qa-regression`** applies when the delivery fixes a reported bug.
   Replay the reported behaviour through the affected interface on the merged
@@ -99,11 +99,10 @@ request/response, screenshot, correlated log line or command output. State
 gaps explicitly. Use the `aw-kanban` skill for the board tool reference if
 needed.
 
-- **Pass.** Call `set_qa_status` once with `done` or `ready_to_deploy`
-  according to the actual rollout. Include the reviewed revision and
-  evidence. Verify the resulting card state. When the exercised acceptance
-  checks meet expectations, record "pass, no findings", name the checks and
-  cite the observed evidence.
+- **Pass.** Call `report_qa_findings(page_id, verdict="passed", revision,
+  summary)` with `pass_status` `done` or `ready_to_deploy` according to the
+  actual rollout. Name the checks you exercised and the observed evidence in
+  `summary`; record "pass, no findings". Verify the resulting card state.
   **Before `ready_to_deploy`:** set `DeployComponent` and
   `DeployToVersion` with `set_kanban_property` (also `DeployEnv` /
   `DeployWorkspaces` when they differ from prod / this workspace), unless the
@@ -112,22 +111,21 @@ needed.
   `remote-host`, or `none` when nothing needs deploying; `DeployToVersion`
   is an exact `vX.Y.Z` or commit SHA, never `latest`. A card without them is
   `invalid` for `kanban_check_deployed` and never leaves the lane.
-- **Actionable rework.** Only a reproduced failure against an accepted
-  criterion, with runtime evidence, qualifies. `Not verified:` entries never
-  trigger Coder rework. Call
-  `handoff_kanban_card(page_id, revision, evidence)` on an In Progress or
-  Testing card. Supply the full reviewed SHA or stable artifact revision,
-  failed criterion, reproduction and expected behavior. Verify the
-  returned card, target, revision and new or reused run ID. This receipt
-  and the findings comment record the verdict. When a response is
-  ambiguous, reconcile it with card-bound runs. If another active run owns
-  the work, verify its acceptance or register one named resumer and
-  reconcile once on wakeup. Report unresolved ownership or board-write
-  failures with evidence. A new QA cycle follows verification of the new
-  merge and required release.
-- **Outside the accepted scope.** Link the existing finding or send the
-  decision to Product Owner with evidence and record the continuation.
-  Route independent in-scope fixes through the Coder handoff.
+- **Issues found.** QA never sends a card back to a Coder and never blocks
+  a card. Call `report_qa_findings(page_id, verdict="issues", revision,
+  summary, findings=[{title, severity, evidence}])` with one entry per failure
+  you reproduced against an accepted criterion. `evidence` carries the steps,
+  expected vs actual and the captured output (request/response, screenshot,
+  log line or command output). The tool comments on the tested card, stamps
+  `QAStatus=issues`, moves the card to Done, and files each finding as a
+  tickable to-do on the target's single findings card (Backlog, tagged
+  `qa-findings`) that a human triages later. It also wakes whoever dispatched
+  you with the findings. Then end your turn; do not call `handoff_kanban_card`
+  (it refuses QA runs) and do not dispatch a Coder. Something you suspect from
+  reading code, an edge case nobody asked for, or a check you could not run is
+  not a finding: leave it out, or list it under `Not verified:` in `summary`.
+- **Outside the accepted scope.** Do not file it as a finding. Mention it in
+  `summary` so the Product Owner can scope it.
 - **Partly verified (access limits or flaky infrastructure).** When you
   verified the core criteria but could not verify the rest because of
   temporary access limits or flaky or down infrastructure, and no specific
@@ -157,10 +155,13 @@ needed.
   outside an enabled flow, the recorded verdict and report complete the
   review.
 
-In an enabled flow, follow the injected `aw-agents-flow` terminal-action
-and callback contract. A confirmed Coder handoff is a dispatch. Report its
-receipt to a waiting caller. Reserve `mark_flow_done` for finished, passed
-work.
+In an enabled flow, `report_qa_findings` is your terminal action for both
+verdicts: it records the outcome, closes the card and wakes your caller, so do
+not also call `return_to_caller_agent`. Finish with a final message that
+repeats the verdict and lists each finding with its evidence, because a caller
+that is waiting on your run's completion receives that message.
+Do not use `mark_flow_done` to record findings: it belongs to the Coder that
+finished work, and it would misreport a QA run.
 
 A terminal-action failure after a verdict leaves the recorded verdict
 valid. Follow the flow's retry and escalation procedure and report the

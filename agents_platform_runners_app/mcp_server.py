@@ -861,14 +861,44 @@ async def _list_tools() -> list[Tool]:
                                                      "description": "Summary of what was planned — becomes the Kanban card comment if there's a card."}},
                           "required": []}),
         Tool(name="handoff_kanban_card",
-             description=("Transfer the caller's active card from QA to its Coder/workflow "
-                          "for accepted rework, or from Architect to implementation. Shares the Ready "
-                          "dispatch claim. A replay of the same stage and revision returns the original run."),
+             description=("Transfer the caller's active card from the Architect to its Coder/workflow "
+                          "for implementation. Shares the Ready dispatch claim. A replay of the "
+                          "same stage and revision returns the original run. QA cannot use this: "
+                          "QA closes with report_qa_findings."),
              inputSchema={"type": "object", "required": ["page_id", "revision", "evidence"],
                           "properties": {
                               "page_id": {"type": "string"},
                               "revision": {"type": "string", "description": "Full reviewed merge SHA or stable design reference."},
                               "evidence": {"type": "string", "description": "Accepted scope, concrete checks/findings and links."},
+                          }}),
+        Tool(name="report_qa_findings",
+             description=("QA's terminal action. Records the outcome on the tested card and closes it: "
+                          "verdict 'passed' moves it to done (or ready_to_deploy), verdict 'issues' "
+                          "files every reproduced finding on the target's single findings card "
+                          "(created in Backlog, one tickable to-do per finding linking the tested "
+                          "card), comments on the tested card, stamps QAStatus=issues and moves it "
+                          "to done. It dispatches nobody: QA never sends a card back to a Coder. "
+                          "The channel that dispatched this QA run is woken with the findings.\n\n"
+                          "A finding is a failure you reproduced through the real interface, with "
+                          "runtime evidence (request/response, screenshot, log line, command "
+                          "output). Do not file suspicions from reading code, speculative edge "
+                          "cases or 'not verified' items. A replay of the same card, revision "
+                          "and verdict is a no-op."),
+             inputSchema={"type": "object", "required": ["page_id", "verdict", "revision"],
+                          "properties": {
+                              "page_id": {"type": "string", "description": "The tested card."},
+                              "verdict": {"type": "string", "enum": ["passed", "issues"]},
+                              "revision": {"type": "string", "description": "Full reviewed merge SHA or stable artifact revision."},
+                              "summary": {"type": "string", "description": "What you exercised and what you saw, in a few lines."},
+                              "findings": {"type": "array",
+                                           "description": "Required for verdict 'issues'.",
+                                           "items": {"type": "object", "required": ["title", "evidence"],
+                                                     "properties": {
+                                                         "title": {"type": "string"},
+                                                         "severity": {"type": "string", "enum": ["blocker", "major", "minor"]},
+                                                         "evidence": {"type": "string", "description": "Steps, expected vs actual, and the captured output."}}}},
+                              "pass_status": {"type": "string", "enum": ["done", "ready_to_deploy"],
+                                              "description": "Only for 'passed'. Default done."},
                           }}),
         Tool(name="run_ready_cards",
              description=("Fire an agents-platform run for every Kanban card sitting in "
@@ -3749,6 +3779,24 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             except ValueError as exc:
                 return _err(400, str(exc))
             except RuntimeError as exc:
+                return _err(503, str(exc))
+            return _ok(result)
+
+        if name == "report_qa_findings":
+            source_id = _caller_run_id(args)
+            if not source_id:
+                return _err(400, "Could not identify the calling run")
+            try:
+                page_id = str(uuid.UUID(args["page_id"]))
+                result = await kanban_dispatch.report_qa_findings(
+                    _board_client(), kanban_dispatch.PlatformClient(c, BASE),
+                    source_id=source_id, page_id=page_id, verdict=args["verdict"],
+                    revision=args["revision"], summary=args.get("summary") or "",
+                    findings=args.get("findings") or [],
+                    pass_status=args.get("pass_status") or "done")
+            except ValueError as exc:
+                return _err(400, str(exc))
+            except (RuntimeError, kanban_dispatch.BoardUnavailable) as exc:
                 return _err(503, str(exc))
             return _ok(result)
 
