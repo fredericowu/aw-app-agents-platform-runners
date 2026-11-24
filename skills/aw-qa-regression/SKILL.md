@@ -1,21 +1,21 @@
 ---
 name: aw-qa-regression
-description: Validate regression tests and mutation-test fixes in an isolated worktree.
+description: Replay a reported bug through the affected interface on the merged revision and show it no longer occurs.
 ---
 
-## Mutation-test the fix in isolation
+## Replay the reported behaviour
 
-1. Confirm the focused regression passes at the reviewed revision. Check
-   that CI discovers the test.
-2. Use a disposable worktree or scratch copy of that revision. Save the
-   exact restoration patch or record the immutable revision before editing.
-3. Remove one fix component and leave its test intact. Run the test and
-   confirm it fails for the intended reason. Repeat separately for every
-   component of a multi-part fix.
-4. Restore the original code, rerun the test, and check the isolated
-   working tree. Record the pass, the intentional failure and the restored
-   pass in the verdict. A test that passes without its fix is insufficient
-   evidence of the regression.
+1. Take the original report: the card's reproduction, the failing request,
+   screen or command. If it has none, ask the caller before inventing one.
+2. Run that exact scenario against the merged revision through the real
+   interface (API, UI, CLI or deployed component).
+3. Record the revision, environment, input, expected result, actual result
+   and one piece of evidence (response, screenshot, log line or command
+   output).
+4. If the bug still reproduces, that is the finding: hand it to the Coder
+   with the evidence. If it does not, record a pass.
 
-Make mutations exclusively in the isolated copy. The shared checkout and
-its stash are used by concurrent sessions.
+Do not mutation-test the fix, remove code to see a test fail, or audit the
+producer's unit tests. Those belong to the review and CI lanes. If the
+scenario cannot be exercised, report it under `Not verified:`; that is
+not a failure and never triggers rework.
