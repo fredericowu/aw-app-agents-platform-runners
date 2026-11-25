@@ -187,7 +187,8 @@ _OWN_MODELS: frozenset[str] | None = None
 #: A manifest entry with its own ``pricing`` block wins; this only fills the
 #: gap, so a newly added Codex model can never ship unpriced.
 CODEX_DEFAULT_PRICING: dict[str, Any] = {
-    "revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0",
+    # revision 0 so any explicit manifest block (default revision 1) supersedes it.
+    "revision": 0, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0",
 }
 
 

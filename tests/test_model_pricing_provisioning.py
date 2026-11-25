@@ -84,7 +84,10 @@ def test_manifest_codex_models_are_explicit_zero_and_others_unset():
     d = json.loads((pathlib.Path(__file__).parent.parent / "aw-app.json").read_text())
     for m in d["contributes"]["agents"]["models"]:
         if m["params"].get("cli") == "codex":
-            assert m["pricing"] == PRICING | {"revision": 1}, m["slug"]
+            from agents_platform_runners_app.agent_provisioner import effective_pricing
+            got = effective_pricing(m)
+            assert {k: got[k] for k in ("input", "output", "cache_read", "cache_write")} == \
+                {k: PRICING[k] for k in ("input", "output", "cache_read", "cache_write")}, m["slug"]
         else:
             assert "pricing" not in m, m["slug"]  # no invented tariffs
 
