@@ -793,3 +793,24 @@ def test_the_memory_tools_exist_and_no_full_replace_tool_does(monkeypatch):
     assert {"get_plan_memory", "update_plan_memory"} <= names
     assert not {"replace_plan_memory", "put_plan_memory",
                 "set_plan_memory"} & names
+
+
+def test_annotate_plan_iteration_card_batch_forwards_items_only(monkeypatch):
+    import json
+    req = _call(monkeypatch, "annotate_plan_iteration_card",
+                {"slug": "my-plan", "iteration_id": "it1", "junk": 1,
+                 "items": [{"card": "a", "action": "skipped", "why": "w", "junk": 2},
+                           {"card": "b", "action": "x", "why": "y", "expected_rev": 0}]},
+                payload={"items": []})
+    assert req.url.path == "/api/plans/my-plan/iterations/it1/annotations"
+    assert json.loads(req.content) == {"items": [
+        {"card": "a", "action": "skipped", "why": "w"},
+        {"card": "b", "action": "x", "why": "y", "expected_rev": 0}]}
+
+
+def test_list_flow_needs_human_cards_reaches_the_reduction_route(monkeypatch):
+    req = _call(monkeypatch, "list_flow_needs_human_cards", {"limit": 50},
+                payload={"cards": [], "total_cards": 0, "truncated": False})
+    assert req.method == "GET"
+    assert req.url.path == "/api/runs/flow-needs-human-cards"
+    assert req.url.params["limit"] == "50"
