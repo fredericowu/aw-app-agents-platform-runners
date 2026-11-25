@@ -1788,6 +1788,20 @@ async def _list_tools() -> list[Tool]:
                                                       "description": "Filter by Run.category: 'work' (real agent/workflow dispatches) or 'monitor' (shell-wrapper dispatches like monitor-shell). Omit for no filter."},
                                          "flow_needs_human": {"type": "boolean",
                                                               "description": "Server-side filter on Run.flow_needs_human (true = only runs whose Agents Flow escalated to a human). Omit for no filter."}}}),
+        Tool(name="list_flow_needs_human_cards",
+             description=("Signal A of the Kanban sweep, reduced server-side: one row "
+                          "per Kanban card (notion_task_id) that has a "
+                          "flow_needs_human run, with `latest_flagged_run` and "
+                          "`latest_run` (any kind; id, status, ended_at, "
+                          "flow_needs_human). Card-less runs excluded, no time "
+                          "bound. Also returns `total_cards` and `truncated`; "
+                          "`truncated=true` means the card list is incomplete and "
+                          "must be treated as a failure. Use INSTEAD of "
+                          "list_runs(flow_needs_human=true, limit=N), which "
+                          "saturates on run rows."),
+             inputSchema={"type": "object",
+                          "properties": {"limit": {"type": "integer",
+                                                    "description": "Max cards (default 500, max 2000)."}}}),
         Tool(name="get_run_detail",
              description=("Bounded run metadata and persisted usage. No events are "
                           "fetched by default. Set full_record=true for complete "
@@ -1989,7 +2003,11 @@ async def _list_tools() -> list[Tool]:
                           "sweep cannot rewrite an earlier iteration. Use INSTEAD of "
                           "update_plan_memory for the kanban-sweeper ledger. Pass "
                           "`expected_rev` (the item's `rev` you read; 0 = new) to "
-                          "get a 409 instead of overwriting a newer annotation."),
+                          "get a 409 instead of overwriting a newer annotation. "
+                          "Stored on the iteration row (durable, survives later "
+                          "sweeps); a closed iteration can still be annotated. "
+                          "`finish_plan_iteration` is refused (409, naming the "
+                          "cards) while a gate candidate lacks action + why."),
              inputSchema={"type": "object",
                           "properties": {"slug": {"type": "string"},
                                          "iteration_id": {"type": "string"},
@@ -1997,8 +2015,17 @@ async def _list_tools() -> list[Tool]:
                                          "action": {"type": "string"},
                                          "why": {"type": "string"},
                                          "disposition": {"type": "string"},
-                                         "expected_rev": {"type": "integer"}},
-                          "required": ["slug", "iteration_id", "card"]}),
+                                         "expected_rev": {"type": "integer"},
+                                         "items": {"type": "array",
+                                                   "description": "Batch form: a list of {card, action, why, disposition, expected_rev}. All-or-nothing; one call annotates every gate candidate. Pass either `card` or `items`.",
+                                                   "items": {"type": "object",
+                                                             "properties": {"card": {"type": "string"},
+                                                                            "action": {"type": "string"},
+                                                                            "why": {"type": "string"},
+                                                                            "disposition": {"type": "string"},
+                                                                            "expected_rev": {"type": "integer"}},
+                                                             "required": ["card"]}}},
+                          "required": ["slug", "iteration_id"]}),
         Tool(name="list_plan_iterations",
              description=("A Plan's iteration history, newest first — what each "
                           "previous cadence tick decided and why. Includes the "
@@ -4119,6 +4146,10 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                 params["flow_needs_human"] = "true" if args["flow_needs_human"] else "false"
             r = await c.get(f"{BASE}/api/runs", params=params)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
+        if name == "list_flow_needs_human_cards":
+            params = {"limit": str(args["limit"])} if args.get("limit") is not None else {}
+            r = await c.get(f"{BASE}/api/runs/flow-needs-human-cards", params=params)
+            return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "get_run_detail":
             run_id = args["run_id"]
             limit = args.get("events_limit")
@@ -4474,6 +4505,15 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
         if name == "annotate_plan_iteration_card":
             body = {k: v for k, v in args.items() if k in (
                 "card", "action", "why", "disposition", "expected_rev")}
+            if isinstance(args.get("items"), list):
+                if not all(isinstance(i, dict) for i in args["items"]):
+                    return _err(400, "every entry of `items` must be an object")
+                body["items"] = [
+                    {k: v for k, v in i.items() if k in (
+                        "card", "action", "why", "disposition", "expected_rev")}
+                    for i in args["items"]]
+            elif not args.get("card"):
+                return _err(400, "pass `card` (single) or `items` (batch)")
             r = await c.post(
                 f"{BASE}/api/plans/{args['slug']}/iterations/{args['iteration_id']}/annotations",
                 json=body)
