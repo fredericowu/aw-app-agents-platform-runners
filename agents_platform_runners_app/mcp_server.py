@@ -4147,7 +4147,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             r = await c.get(f"{BASE}/api/runs", params=params)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "list_flow_needs_human_cards":
-            params = {"limit": str(args["limit"])} if args.get("limit") else {}
+            params = {"limit": str(args["limit"])} if args.get("limit") is not None else {}
             r = await c.get(f"{BASE}/api/runs/flow-needs-human-cards", params=params)
             return _err(r.status_code, r.text) if r.status_code != 200 else _ok(r.json())
         if name == "get_run_detail":
@@ -4506,10 +4506,12 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             body = {k: v for k, v in args.items() if k in (
                 "card", "action", "why", "disposition", "expected_rev")}
             if isinstance(args.get("items"), list):
+                if not all(isinstance(i, dict) for i in args["items"]):
+                    return _err(400, "every entry of `items` must be an object")
                 body["items"] = [
                     {k: v for k, v in i.items() if k in (
                         "card", "action", "why", "disposition", "expected_rev")}
-                    for i in args["items"] if isinstance(i, dict)]
+                    for i in args["items"]]
             elif not args.get("card"):
                 return _err(400, "pass `card` (single) or `items` (batch)")
             r = await c.post(

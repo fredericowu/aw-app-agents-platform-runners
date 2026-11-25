@@ -814,3 +814,17 @@ def test_list_flow_needs_human_cards_reaches_the_reduction_route(monkeypatch):
     assert req.method == "GET"
     assert req.url.path == "/api/runs/flow-needs-human-cards"
     assert req.url.params["limit"] == "50"
+
+
+def test_annotate_batch_with_a_non_object_item_posts_nothing(monkeypatch):
+    rec: list = []
+    _patch_client(monkeypatch, rec)
+    out = asyncio.run(mcp_server._call_tool(
+        "annotate_plan_iteration_card",
+        {"slug": "p", "iteration_id": "i", "items": [{"card": "a"}, None]}))
+    assert rec == [] and "object" in str(out)
+
+
+def test_list_flow_needs_human_cards_forwards_an_explicit_zero_limit(monkeypatch):
+    req = _call(monkeypatch, "list_flow_needs_human_cards", {"limit": 0}, payload={"cards": []})
+    assert req.url.params["limit"] == "0"
