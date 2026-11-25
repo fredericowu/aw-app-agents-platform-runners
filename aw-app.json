@@ -286,6 +286,85 @@
           }
         },
         {
+          "slug": "codex-runner-gpt-5",
+          "pricing": {
+            "revision": 1,
+            "input": "0",
+            "output": "0",
+            "cache_read": "0",
+            "cache_write": "0"
+          },
+          "provider": "runner",
+          "model_id": "codex-runner-gpt-5",
+          "display_name": "Codex GPT-5 (aw Runner)",
+          "params": {
+            "cli": "codex",
+            "runner": "aw-codex",
+            "timeout_s": 900,
+            "dangerous_skip_permissions": true
+          }
+        },
+        {
+          "slug": "codex-runner-gpt-5-6-luna",
+          "pricing": {
+            "revision": 1,
+            "input": "0",
+            "output": "0",
+            "cache_read": "0",
+            "cache_write": "0"
+          },
+          "provider": "runner",
+          "model_id": "codex-runner-gpt-5-6-luna",
+          "display_name": "Codex (aw Runner, GPT-5.6 Luna)",
+          "params": {
+            "runner": "aw-codex",
+            "cli": "codex",
+            "model": "gpt-5.6-luna",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "codex-runner-gpt-5-6-sol",
+          "pricing": {
+            "revision": 1,
+            "input": "0",
+            "output": "0",
+            "cache_read": "0",
+            "cache_write": "0"
+          },
+          "provider": "runner",
+          "model_id": "codex-runner-gpt-5-6-sol",
+          "display_name": "Codex (aw Runner, GPT-5.6 Sol)",
+          "params": {
+            "runner": "crispal-codex",
+            "cli": "codex",
+            "model": "gpt-5.6-sol",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
+          "slug": "codex-runner-gpt-5-6-terra",
+          "pricing": {
+            "revision": 1,
+            "input": "0",
+            "output": "0",
+            "cache_read": "0",
+            "cache_write": "0"
+          },
+          "provider": "runner",
+          "model_id": "codex-runner-gpt-5-6-terra",
+          "display_name": "Codex (aw Runner, GPT-5.6 Terra)",
+          "params": {
+            "runner": "aw-codex",
+            "cli": "codex",
+            "model": "gpt-5.6-terra",
+            "dangerous_skip_permissions": true,
+            "timeout_s": 900
+          }
+        },
+        {
           "slug": "antigravity-gemini-3-8-flash-high",
           "provider": "runner",
           "model_id": "antigravity-gemini-3-8-flash-high",
