@@ -180,6 +180,33 @@ def _own_model_slugs() -> frozenset[str]:
 
 
 _OWN_MODELS: frozenset[str] | None = None
+
+#: Every Codex model this app registers MUST carry a price definition so run
+#: cost can be computed. Codex here is billed outside the platform, so the
+#: default is an explicit zero (cost_status=known, cost 0) rather than unpriced.
+#: A manifest entry with its own ``pricing`` block wins; this only fills the
+#: gap, so a newly added Codex model can never ship unpriced.
+CODEX_DEFAULT_PRICING: dict[str, Any] = {
+    "revision": 1, "input": "0", "output": "0", "cache_read": "0", "cache_write": "0",
+}
+
+
+def is_codex_model(entry: dict[str, Any]) -> bool:
+    params = entry.get("params")
+    params = params if isinstance(params, dict) else {}
+    return (str(params.get("cli") or "").lower() == "codex"
+            or str(params.get("runner") or "").lower() == "aw-codex")
+
+
+def effective_pricing(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """The price block to contribute for one model entry (explicit, else the
+    Codex default, else None)."""
+    block = entry.get(PRICING_KEY)
+    if isinstance(block, dict):
+        return block
+    return dict(CODEX_DEFAULT_PRICING) if is_codex_model(entry) else None
+
+
 _PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
 
 RESTORE_ENDPOINTS: dict[str, str] = {
@@ -400,8 +427,8 @@ class AgentProvisioner:
         """PUT one model's contributed price defaults. True when applied (or the
         entry declares none); False when it could not be, so the caller does not
         advance a baseline over a price that never landed."""
-        block = entry.get(PRICING_KEY)
-        if not isinstance(block, dict):
+        block = effective_pricing(entry)
+        if block is None:
             return True
         if slug not in _own_model_slugs():
             # Defaults are recorded under this app's identity, so only models
