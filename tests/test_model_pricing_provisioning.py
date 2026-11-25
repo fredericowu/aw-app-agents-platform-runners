@@ -84,7 +84,10 @@ def test_manifest_codex_models_are_explicit_zero_and_others_unset():
     d = json.loads((pathlib.Path(__file__).parent.parent / "aw-app.json").read_text())
     for m in d["contributes"]["agents"]["models"]:
         if m["params"].get("cli") == "codex":
-            assert m["pricing"] == PRICING | {"revision": 1}, m["slug"]
+            from agents_platform_runners_app.agent_provisioner import effective_pricing
+            got = effective_pricing(m)
+            assert {k: got[k] for k in ("input", "output", "cache_read", "cache_write")} == \
+                {k: PRICING[k] for k in ("input", "output", "cache_read", "cache_write")}, m["slug"]
         else:
             assert "pricing" not in m, m["slug"]  # no invented tariffs
 
@@ -128,3 +131,40 @@ def test_redirected_pricing_put_is_not_acknowledged():
                 return httpx.Response(307, headers={"location": "http://elsewhere/x"})
             return super().__call__(req)
     assert prov(P()).update("models", MODEL["slug"], {"pricing": PRICING}) is False
+
+
+# ---- structural guarantee: no Codex model is ever unpriced -------------------
+
+def _manifest_models():
+    from pathlib import Path
+    m = json.loads((Path(__file__).resolve().parents[1] / "aw-app.json").read_text())
+    return m["contributes"]["agents"]["models"]
+
+
+def test_every_registered_codex_model_has_a_pricing_default():
+    from agents_platform_runners_app.agent_provisioner import effective_pricing, is_codex_model
+    codex = [m for m in _manifest_models() if is_codex_model(m)]
+    assert codex, "expected at least one codex model in the manifest"
+    for m in codex:
+        block = effective_pricing(m)
+        assert block is not None, m["slug"]
+        for f in ("input", "output", "cache_read", "cache_write"):
+            assert f in block, (m["slug"], f)
+
+
+def test_unpriced_codex_entry_gets_default_zero_block():
+    p = Platform()
+    entry = {"slug": "codex-runner-gpt-6-1-sol", "provider": "runner",
+             "model_id": "x", "params": {"cli": "codex", "runner": "aw-codex"}}
+    prov(p).seed("agents-platform-runners", {"models": [entry]})
+    put = next(c for c in p.calls if c[0] == "PUT")
+    assert put[1] == "/api/models/codex-runner-gpt-6-1-sol/pricing-defaults"
+    assert put[2]["prices"] == {"input": "0", "output": "0", "cache_read": "0", "cache_write": "0"}
+
+
+def test_non_codex_entry_stays_unpriced():
+    p = Platform()
+    entry = {"slug": "claude-runner-sonnet", "provider": "runner", "model_id": "x",
+             "params": {"cli": "claude"}}
+    prov(p).seed("agents-platform-runners", {"models": [entry]})
+    assert not [c for c in p.calls if c[0] == "PUT"]
