@@ -663,6 +663,94 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
             "dry_run": dry_run, "results": results}
 
 
+ATTENTION_DRIVER_AGENT = "product-owner"
+ATTENTION_DEFAULT_LIMIT = 25
+ATTENTION_CONCURRENCY = 4
+
+_DRIVER_BRIEF = (
+    "You are driving this card to completion. Nothing else will pick it up.\n"
+    "1. Read the card and its comments, then decide the single next step that moves it forward.\n"
+    "2. Dispatch whatever agent that step needs (architect for design, coder for implementation, "
+    "qa for verification, debugger for a failure) with run_agent_async, passing this card's "
+    "page_id as notion_task_id and quoting what the agent needs. Do not do their work yourself.\n"
+    "3. An epic (the card has ChildCards) is its children: dispatch every open Backlog or Ready "
+    "child to its own agent, and move the parent to Done once every child is Done, Self-closed "
+    "or Archived.\n"
+    "4. If a PR for this card is merged and its acceptance is met, close the card. If a run is "
+    "already in flight for it, do nothing.\n"
+    "5. Escalate to Need Human only for a decision that truly needs the owner (spend, credentials, "
+    "irreversible action on real data, product call); state the question and your recommendation.\n"
+    "6. Finish with a terminal action (mark_flow_done, or an explicit hand-off) and a one-line "
+    "summary of what you dispatched or decided."
+)
+
+
+def build_driver_input(card: dict, summary: dict | None = None) -> str:
+    """The per-card prompt for the attention driver: the standing brief, why
+    the board flagged the card, then the card itself (same body/comments
+    layout every other dispatch uses)."""
+    flagged = {k: summary[k] for k in ("reason", "reasons", "blocker", "idle_hours", "status")
+               if summary and summary.get(k) not in (None, "", [])}
+    why = ("Why the board flagged it: " + json.dumps(flagged, default=str)
+           if flagged else "")
+    return "\n\n".join(p for p in (_DRIVER_BRIEF, why, build_run_input(card)) if p)
+
+
+async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
+                          limit: int = ATTENTION_DEFAULT_LIMIT,
+                          agent_slug: str = ATTENTION_DRIVER_AGENT,
+                          dry_run: bool = False,
+                          default_target_slug: str = DEFAULT_TARGET_SLUG) -> dict:
+    """Fire one driver prompt per card the board says needs attention.
+
+    Replaces handing the whole list to the Manager: each card gets its own
+    run of ``agent_slug`` (the Product Owner), whose only job is to drive that
+    card to completion and dispatch whatever agent it needs. No claim and no
+    status move: the card stays where it is, the driver moves it. A card with
+    a run already pending/running is skipped, so a repeat tick never stacks a
+    second driver on the same card. One card's failure never ends the pass.
+    """
+    attention = await asyncio.to_thread(board.need_attention, limit=limit, reping=True)
+    cards = attention.get("cards") if isinstance(attention, dict) else None
+    cards = cards if isinstance(cards, list) else []
+    results: list[dict] = []
+    if cards and not dry_run:
+        await platform.validate_agent(agent_slug)
+    sem = asyncio.Semaphore(ATTENTION_CONCURRENCY)
+
+    async def _one(summary: dict) -> dict:
+        page_id = summary.get("page_id") or ""
+        row: dict = {"page_id": page_id, "title": summary.get("title")}
+        async with sem:
+            try:
+                latest = await platform.latest_run(page_id)
+                if latest and latest.get("status") in ACTIVE_RUN_STATUSES:
+                    return {**row, "skipped": "run-already-in-flight", "run_id": latest.get("id")}
+                card = {**summary, **(await asyncio.to_thread(board.card, page_id))}
+                row["title"] = card.get("title")
+                if QA_FINDINGS_TAG in _card_tags(card):
+                    return {**row, "skipped": "qa-findings-card"}
+                path, payload = dispatch_payload(
+                    {**card, "agent_slug": agent_slug, "workflow_slug": ""},
+                    build_driver_input(card, summary), default_target_slug=default_target_slug)
+                if dry_run:
+                    return {**row, "would_dispatch": path, "target_slug": payload["target_slug"]}
+                run_id, error, _rejected = await platform.dispatch(path, payload)
+                if error:
+                    return {**row, "error": error}
+                return {**row, "run_id": run_id, "agent_slug": agent_slug}
+            except BoardUnavailable as exc:
+                return {**row, "error": f"board unavailable: {exc}"}
+            except Exception as exc:  # per card: one bad card never ends the pass
+                log.warning("attention sweep: card %s failed", page_id, exc_info=True)
+                return {**row, "error": str(exc)}
+
+    results = list(await asyncio.gather(*(_one(c) for c in cards)))
+    dispatched = sum(1 for r in results if r.get("run_id") and not r.get("skipped"))
+    return {"has_work": bool(cards), "considered": len(results), "dispatched": dispatched,
+            "dry_run": dry_run, "results": results}
+
+
 async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_id: str,
                        page_id: str, revision: str, evidence: str) -> dict:
     """Transfer an in-progress card from its active Architect run.
