@@ -365,7 +365,8 @@ def dispatch_payload(card: dict, input_text: str, *, default_coder: str = "coder
 
 def resume_payload(run: dict, page_id: str, message: str, *,
                    callback_origin_run_id: str | None = None, call_me_back: bool = True,
-                   call_me_back_on: str | None = None) -> tuple[str, dict] | str:
+                   call_me_back_on: str | None = None,
+                   dispatcher_run_id: str | None = None) -> tuple[str, dict] | str:
     """``(path, body)`` to resume the card's session, or a string saying why
     it can't be resumed. A card whose last run has no session is a real,
     explainable state — not an exception."""
@@ -402,6 +403,11 @@ def resume_payload(run: dict, page_id: str, message: str, *,
     if armed and call_me_back_on:
         payload["call_me_back_on"] = call_me_back_on
     payload["call_me_back"] = armed
+    # Who is asking, armed or not: the backend's flow_handoff guard needs it
+    # even when no callback is requested (callback_origin_run_id is only sent
+    # when armed). Identity only — not a parent, no hop/card semantics.
+    if dispatcher_run_id:
+        payload["dispatcher_run_id"] = dispatcher_run_id
     return f"/api/agents/{agent_slug}/run", payload
 
 

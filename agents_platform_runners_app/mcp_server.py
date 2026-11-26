@@ -3586,6 +3586,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             # this one — not something the calling LLM sets, see _caller_run_id.
             if _rid := _caller_run_id(args):
                 body["caller_run_id"] = _rid
+                body["dispatcher_run_id"] = _rid  # flow_handoff guard identity (see backend check_flow_handoff)
             # Forward the caller's call-me-back INTENT so the dispatched run
             # carries it from creation. The callback is still armed later, by
             # the caller's own turn — but the child builds its system prompt
@@ -3653,6 +3654,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                 body["target_slug"] = args["target_slug"]
             if _rid := _caller_run_id(args):
                 body["caller_run_id"] = _rid
+                body["dispatcher_run_id"] = _rid  # flow_handoff guard identity (see backend check_flow_handoff)
             # Forward call_me_back itself, not just its redirect — without
             # this the backend's RunInput.call_me_back defaults to False for
             # every workflow dispatch regardless of what the caller asked
@@ -3950,6 +3952,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
                 run = runs[0]
             planned = kanban_dispatch.resume_payload(
                 run, page_id, message, callback_origin_run_id=_caller_run_id(args),
+                dispatcher_run_id=_caller_run_id(args),
                 call_me_back=args.get("call_me_back") is not False,
                 call_me_back_on=(args.get("call_me_back_on") or "").strip() or None)
             if isinstance(planned, str):
@@ -4288,6 +4291,7 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             body = dict(args)
             if _rid := _caller_run_id(args):
                 body["caller_run_id"] = _rid
+                body["dispatcher_run_id"] = _rid  # flow_handoff guard identity (see backend check_flow_handoff)
             body["call_me_back"] = args.get("call_me_back") is not False
             if args.get("call_me_back_on"):
                 body["call_me_back_on"] = args["call_me_back_on"]
@@ -4914,6 +4918,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             if args.get("target_id"):
                 body["target_id"] = args["target_id"]
             body.setdefault("workspace", _own_workspace())
+            if _rid := _caller_run_id(args):
+                body["dispatcher_run_id"] = _rid  # identity only: NOT caller_run_id (would change parentage/card inheritance)
             r = await c.post(f"{BASE}/api/agents/{slug}/run", json=body)
             if r.status_code != 200:
                 return _err(r.status_code, r.text)
@@ -4929,6 +4935,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             if args.get("target_id"):
                 body["target_id"] = args["target_id"]
             body.setdefault("workspace", _own_workspace())
+            if _rid := _caller_run_id(args):
+                body["dispatcher_run_id"] = _rid  # identity only: NOT caller_run_id (would change parentage/card inheritance)
             r = await c.post(f"{BASE}/api/workflows/{slug}/run", json=body)
             if r.status_code != 200:
                 return _err(r.status_code, r.text)
