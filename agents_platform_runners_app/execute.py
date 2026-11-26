@@ -225,6 +225,25 @@ def _creds_copy_ignore(directory: str, names: list[str]) -> set[str]:
     return ignored
 
 
+AGY_TOKEN_REL = "antigravity-cli/antigravity-oauth-token"
+#: Per-container tmpfs over agy's tool cache. agy rewrites all of it on every
+#: start and watches it; a foreign temp+rename in a SHARED copy registers a tool
+#: twice ("tool name conflict", exit 3, not retryable). ~3.5 MB, RAM only.
+AGY_TOOLCACHE_REL = "antigravity-cli/mcp"
+
+
+def _agy_home_populated(shared_home: "Path") -> bool:
+    return (shared_home / AGY_TOKEN_REL).is_file()
+
+
+def _stage_agy_token_only(src_root: "Path", dest: "Path") -> None:
+    """Populated shared home: the only file ever read from the staged copy."""
+    tok = src_root / AGY_TOKEN_REL
+    (dest / "antigravity-cli").mkdir(parents=True, exist_ok=True)
+    if tok.is_file():
+        shutil.copy2(tok, dest / AGY_TOKEN_REL)
+
+
 def _creds_copy_ignore_for(spec: dict, src_root: "Path"):
     """``ignore`` callback for the PER-RUN staged creds copy of one CLI.
 
@@ -240,9 +259,19 @@ def _creds_copy_ignore_for(spec: dict, src_root: "Path"):
     copy is actually READ for is two files and does not grow.
     """
     allow = spec.get("creds_copy_allow")
+    deny = spec.get("creds_copy_deny")
+    root = os.fspath(src_root)
+    if deny and not allow:
+        def _ignore_deny(directory: str, names: list[str]) -> set[str]:
+            ignored = set(_creds_copy_ignore(directory, names))
+            rel = os.path.relpath(directory, root)
+            prefix = "" if rel == "." else rel + "/"
+            ignored |= {n for n in names if prefix + n in deny}
+            return ignored
+
+        return _ignore_deny
     if not allow:
         return _creds_copy_ignore
-    root = os.fspath(src_root)
 
     def _ignore(directory: str, names: list[str]) -> set[str]:
         ignored = set(_creds_copy_ignore(directory, names))
@@ -705,6 +734,9 @@ CLI_SPECS: dict[str, dict] = {
         "append_system_prompt_file_flag": None,
         "env_token_auth": False,
         "creds_dir": ".gemini", "creds_file": None,
+        # First-populate copy only (see _agy_home_populated): these are runtime
+        # output of past runs, ~125 MB of the ~129 MB, never read from a stage.
+        "creds_copy_deny": ("conversations", "brain", "log", "bin", "antigravity-cli/mcp"),
         "image_suffix": "gemini",
         "mount_bin": ".aw-workspace/antigravity-cli/.local/bin/agy",
     },
@@ -721,6 +753,9 @@ CLI_SPECS: dict[str, dict] = {
         "append_system_prompt_file_flag": None,
         "env_token_auth": False,
         "creds_dir": ".gemini", "creds_file": None,
+        # First-populate copy only (see _agy_home_populated): these are runtime
+        # output of past runs, ~125 MB of the ~129 MB, never read from a stage.
+        "creds_copy_deny": ("conversations", "brain", "log", "bin", "antigravity-cli/mcp"),
         "image_suffix": "gemini",
         "mount_bin": ".aw-workspace/antigravity-cli/.local/bin/agy",
     },
@@ -2426,14 +2461,20 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     # the fallback branch below already documents) — the workspace's own
     # `codex login` remains the source of truth.
     creds_staged = False
+    agy_toolcache: str | None = None
     codex_config_path = None
     if direct_home_mount and not spec.get("env_token_auth"):
         creds_copy = isolated_host_dir / "creds"
         try:
             if creds_copy.exists():
                 shutil.rmtree(creds_copy, ignore_errors=True)
-            shutil.copytree(_real_home / creds_dir, creds_copy,
-                            ignore=_creds_copy_ignore_for(spec, _real_home / creds_dir))
+            if (cli in ("agy", "antigravity")
+                    and _agy_home_populated(Path(WORKSPACE_CONTAINER_DIR) / _cli_home_rel(creds_dir))):
+                creds_copy.mkdir(parents=True, exist_ok=True)
+                _stage_agy_token_only(_real_home / creds_dir, creds_copy)
+            else:
+                shutil.copytree(_real_home / creds_dir, creds_copy,
+                                ignore=_creds_copy_ignore_for(spec, _real_home / creds_dir))
             if cli == "codex" and (creds_copy / "config.toml").is_file():
                 # So a brand-new shared $CODEX_HOME inherits the warm-token
                 # header patch the first time it's ever populated from this
@@ -2947,6 +2988,14 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
                         pass
             staged_home = "/home/ubuntu/.gemini"
             _mount(_home_rel, staged_home, ro=False)
+            # Mountpoint must exist host-side or podman creates it as root.
+            agy_toolcache = f"{staged_home}/{AGY_TOOLCACHE_REL}"
+            try:
+                _tc = _home_abs / AGY_TOOLCACHE_REL
+                _tc.mkdir(parents=True, exist_ok=True)
+                _tc.chmod(0o777)
+            except Exception:
+                log.warning("execute: could not prepare agy tool-cache mountpoint", exc_info=True)
             _inner = " ".join(shlex.quote(a) for a in argv)
             argv = ["sh", "-lc",
                     f'[ -f {staged_home}/antigravity-cli/antigravity-oauth-token ] || cp -a /aw-creds/. {staged_home}/ 2>/dev/null; '
@@ -3038,6 +3087,7 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
         "working_dir": "/opt/aw-workspace",
         "environment": env,
         "volumes": volumes,
+        **({"tmpfs": {agy_toolcache: "mode=1777"}} if agy_toolcache else {}),
         "detach": True,
         # NOT remove=True — _stream_cold_attempt needs the container to
         # still exist after it exits, to fetch its stderr (as `cli.stderr`

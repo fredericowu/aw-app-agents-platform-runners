@@ -77,6 +77,8 @@ def test_build_container_kwargs_for_agy(monkeypatch, tmp_path, model):
     # Check gemini home mount
     gemini_mount = any(v.get("bind") == "/home/ubuntu/.gemini" for v in volumes.values())
     assert gemini_mount, f"Expected /home/ubuntu/.gemini in {volumes}"
+    # Per-container tool cache (race fix): tmpfs, not shared
+    assert kwargs["tmpfs"] == {"/home/ubuntu/.gemini/antigravity-cli/mcp": "mode=1777"}
 
 
 def test_agy_resume_conversation(monkeypatch, tmp_path):
@@ -124,3 +126,66 @@ def test_runner_status_resolves_agy(monkeypatch, tmp_path):
     assert status["installed"] is True
     assert status["path"] == str(agy_bin)
     assert status["version"] == "1.5.9"
+
+
+def _agy_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("AW_WORKSPACE_HOST_DIR", "/host/workspace")
+    monkeypatch.setenv("AW_WORKSPACE_HOME_HOST_DIR", "/host/home")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOST_DIR", "/host/workspace")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "/host/home")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(tmp_path / "ws"))
+    monkeypatch.setattr(execute_mod, "REAL_HOME", str(tmp_path / "home"))
+    g = tmp_path / "home" / ".gemini"
+    for d in ("antigravity-cli", "conversations", "brain", "log", "config"):
+        (g / d).mkdir(parents=True)
+    (g / "antigravity-cli" / "antigravity-oauth-token").write_text("tok")
+    (g / "antigravity-cli" / "mcp").mkdir()
+    (g / "conversations" / "c.pb").write_text("x" * 100)
+    (g / "config" / "settings.json").write_text("{}")
+    (tmp_path / "ws").mkdir(parents=True, exist_ok=True)
+    return g
+
+
+def _staged(tmp_path):
+    return list((tmp_path / "home").glob(".gemini/isolated/*/creds"))[0]
+
+
+def _job(run_id):
+    return {"run_id": run_id, "cli": "agy", "prompt": "p",
+            "model": "gemini-3.8-flash-low", "permissions": {"workspace_access": True}}
+
+
+def test_agy_populated_home_stages_token_only(monkeypatch, tmp_path):
+    _agy_env(monkeypatch, tmp_path)
+    shared = tmp_path / "ws" / execute_mod._cli_home_rel(".gemini")
+    (shared / "antigravity-cli").mkdir(parents=True)
+    (shared / "antigravity-cli" / "antigravity-oauth-token").write_text("tok")
+    execute_mod._build_container_kwargs(_job("agy-pop"))
+    files = sorted(p.relative_to(_staged(tmp_path)).as_posix()
+                   for p in _staged(tmp_path).rglob("*") if p.is_file())
+    assert files == ["antigravity-cli/antigravity-oauth-token"]
+    # host-side mountpoint for the tmpfs exists
+    assert (shared / "antigravity-cli" / "mcp").is_dir()
+
+
+def test_agy_unpopulated_home_first_copy_skips_bulk(monkeypatch, tmp_path):
+    _agy_env(monkeypatch, tmp_path)
+    execute_mod._build_container_kwargs(_job("agy-fresh"))
+    staged = _staged(tmp_path)
+    assert (staged / "antigravity-cli" / "antigravity-oauth-token").is_file()
+    assert (staged / "config" / "settings.json").is_file()
+    for bulk in ("conversations", "brain", "log"):
+        assert not (staged / bulk).exists()
+    assert not (staged / "antigravity-cli" / "mcp").exists()
+
+
+def test_codex_kwargs_have_no_tmpfs(monkeypatch, tmp_path):
+    _agy_env(monkeypatch, tmp_path)
+    c = tmp_path / "home" / ".codex"
+    c.mkdir()
+    (c / "auth.json").write_text("{}")
+    (c / "config.toml").write_text("")
+    job = _job("codex-1")
+    job.update(cli="codex", model="gpt-5")
+    _i, _a, kwargs, _m = execute_mod._build_container_kwargs(job)
+    assert "tmpfs" not in kwargs
