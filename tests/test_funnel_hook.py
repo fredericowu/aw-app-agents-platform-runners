@@ -61,7 +61,8 @@ def test_success_work_run_pings_with_raw_facts(monkeypatch):
 @pytest.mark.parametrize("patch", [
     {"status": "error"}, {"status": "cancelled"}, {"status": "running"},
     {"category": "monitor"}, {"category": None},
-    {"input": "/compact"}, {"initiator_kind": "auto_compact"},
+    {"input": "/compact"}, {"input": {"input": "/compact"}},
+    {"initiator_kind": "auto_compact"},
     {"initiator_kind": "pending_compact"},
 ])
 def test_non_counting_runs_never_ping(monkeypatch, patch):
@@ -102,6 +103,30 @@ def test_latch_is_per_model_and_skips_repeat(monkeypatch):
     assert len(calls) == 2
 
 
+def test_latch_distinguishes_slugs_behind_an_unclassified_model(monkeypatch):
+    calls = _install(monkeypatch, {**OK_RUN, "model_slug": "haiku-4-5"})
+    job = {**JOB, "model": "default"}
+    assert funnel_hook.report_run("r1", job) is True
+    monkeypatch.setattr(funnel_hook, "_wait_finalized",
+                        lambda *_a, **_k: {**OK_RUN, "model_slug": "sonnet-4-5"})
+    assert funnel_hook.report_run("r2", job) is True          # different tier input
+    assert len(calls) == 2
+
+
+def test_start_bounds_concurrent_pollers(monkeypatch):
+    import threading
+    gate = threading.Event()
+    monkeypatch.setattr(funnel_hook, "_slots", threading.BoundedSemaphore(2))
+    monkeypatch.setattr(funnel_hook, "report_run", lambda *_a: gate.wait(5))
+    _install(monkeypatch, OK_RUN)
+    monkeypatch.setattr(funnel_hook, "report_run", lambda *_a: gate.wait(5))
+    t1, t2 = funnel_hook.start("r1", JOB), funnel_hook.start("r2", JOB)
+    assert t1 and t2
+    assert funnel_hook.start("r3", JOB) is None               # no free slot
+    gate.set(); t1.join(2); t2.join(2)
+    assert funnel_hook.start("r4", JOB) is not None           # slot released
+
+
 def test_wait_failure_never_raises(monkeypatch):
     def boom(*_a, **_k):
         raise RuntimeError("ap-mt down")
@@ -122,7 +147,8 @@ def test_wait_finalized_polls_until_ended(monkeypatch):
         def __init__(self, *a, **k): pass
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def get(self, url):
+        def get(self, url, params=None):
+            assert params == {"metadata": "true"}   # bounded projection, not the full run
             body = seq.pop(0)
             return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: body})()
 

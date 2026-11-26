@@ -36,11 +36,15 @@ from .model_provenance import model_identifier
 log = logging.getLogger(__name__)
 
 DEADLINE_S = 24 * 3600
-_POLL_MAX_S = 15.0
+_POLL_MAX_S = 60.0
+_MAX_CONCURRENT = 8
 _COMPACT_INITIATORS = {"auto_compact", "pending_compact"}
 
 _latch: set[str] = set()
 _latch_lock = threading.Lock()
+# Bounds outstanding pollers; the funnel is best-effort, so a run that finds
+# every slot busy is simply not reported (the next success will be).
+_slots = threading.BoundedSemaphore(_MAX_CONCURRENT)
 
 
 def _link() -> tuple[str, str, str] | None:
@@ -55,12 +59,16 @@ def _link() -> tuple[str, str, str] | None:
 def _counts(run: dict) -> bool:
     if run.get("status") != "success" or run.get("category") != "work":
         return False
-    prompt = str(run.get("input") or "").strip()
+    raw = run.get("input")
+    # AP-MT stores the prompt as {"input": "<text>"}; tolerate a bare string.
+    prompt = str((raw.get("input") if isinstance(raw, dict) else raw) or "").strip()
     return not (prompt == "/compact" or run.get("initiator_kind") in _COMPACT_INITIATORS)
 
 
 def _latch_key(model: str | None, model_slug: str | None) -> str:
-    return model or model_slug or ""
+    # Backend tiers fall back to model_slug when the requested model is
+    # unclassified, so both inputs are part of the key.
+    return f"{model or ''}|{model_slug or ''}"
 
 
 def _wait_finalized(run_id: str, cfg: dict) -> dict | None:
@@ -71,7 +79,8 @@ def _wait_finalized(run_id: str, cfg: dict) -> dict | None:
     delay = 0.5
     with httpx.Client(headers=headers, timeout=10) as client:
         while time.monotonic() < deadline:
-            resp = client.get(f"{base}/api/runs/{run_id}")
+            resp = client.get(f"{base}/api/runs/{run_id}",
+                              params={"metadata": "true"})
             resp.raise_for_status()
             run = resp.json()
             if run.get("ended_at") is not None:
@@ -89,8 +98,6 @@ def report_run(run_id: str, job: dict) -> bool:
         if link is None or job.get("raw_command"):
             return False
         model = model_identifier(job.get("model"))
-        if model is not None and _latch_key(model, None) in _latch:
-            return False
         run = _wait_finalized(run_id, execution_index._config)
         if run is None or not _counts(run):
             return False
@@ -114,14 +121,27 @@ def report_run(run_id: str, job: dict) -> bool:
         return False
 
 
+def _run_slot(run_id: str, job: dict) -> None:
+    try:
+        report_run(run_id, job)
+    finally:
+        _slots.release()
+
+
 def start(run_id: str, job: dict) -> threading.Thread | None:
     """Fire-and-forget; safe to call from any post-run site."""
     try:
         if _link() is None or job.get("raw_command"):
             return None
-        thread = threading.Thread(target=report_run, args=(run_id, job),
+        if not _slots.acquire(blocking=False):
+            return None
+        thread = threading.Thread(target=_run_slot, args=(run_id, job),
                                   name=f"funnel-{run_id[:12]}", daemon=True)
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            _slots.release()
+            raise
         return thread
     except Exception:  # noqa: BLE001
         log.warning("funnel: could not start run=%s", run_id, exc_info=True)
