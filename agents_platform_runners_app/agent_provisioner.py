@@ -181,6 +181,13 @@ def _own_model_slugs() -> frozenset[str]:
 
 _OWN_MODELS: frozenset[str] | None = None
 
+# Manifest (aw-app.json) list prices, USD per 1M tokens (input/output/cache_read/
+# cache_write), revision 2. Standard short-context (<=272K prompt) API list
+# prices from https://developers.openai.com/api/docs/models/<model>, not what the
+# platform is billed (Codex runs outside it). cache_write = 1.25x input where the
+# page states it; gpt-5 lists no cache-write price, so 0. Note gpt-5.6-* prices
+# are promotional until 2026-11-30. Revisit when they change (bump revision).
+# Contributed defaults never override user-edited prices (AP-MT rule).
 #: Every Codex model this app registers MUST carry a price definition so run
 #: cost can be computed. Codex here is billed outside the platform, so the
 #: default is an explicit zero (cost_status=known, cost 0) rather than unpriced.
