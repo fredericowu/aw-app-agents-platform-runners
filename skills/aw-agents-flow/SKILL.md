@@ -7,7 +7,7 @@ description: Terminal actions for agents in an enabled Agents Flow. Injected at 
 
 Use terminal actions only when the dispatch provides an explicit Agents Platform run ID. If it is absent, continue as an ordinary conversation. No terminal action is required in that case, and do not search for, infer, or fabricate a run ID.
 
-End the turn with one of these actions. The dispatch lists connected agents and whether a caller is waiting; `list_agents` finds others. The list is guidance unless the context says it is binding: an agent whose per-run context says the connected agents are the ONLY ones it can dispatch gets a 403 for any other target (no run starts) — that is a routing answer, not a tool failure.
+Pick a terminal action below. Use `list_agents` to find agents. If the dispatch says its list is binding, other targets return 403 before starting.
 
 - **Handoff**: `run_agent_async(slug=..., input=..., target_slug=..., call_me_back=false)` starts a fresh run with only the supplied input. Use the same target and omit `notion_task_id` to inherit the card. Set `call_me_back=true` if you need the result. After a timeout, check `list_target_runs` before dispatching again.
 - **Report back**: `return_to_caller_agent(message=..., kind="result")` resumes your caller's session. Use `kind="question"` for a decision or `kind="blocker"` when stuck. It requires a caller and safely no-ops if that caller already requested a callback.

@@ -3837,7 +3837,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             # would be the one path without a claim.
             try:
                 result = await kanban_dispatch.sweep_ready(
-                    _board_client(), kanban_dispatch.PlatformClient(c, BASE),
+                    _board_client(), kanban_dispatch.PlatformClient(
+                        c, BASE, dispatcher_run_id=_caller_run_id(args)),
                     status=args.get("status") or "ready",
                     limit=int(args.get("limit") or 50),
                     dry_run=bool(args.get("dry_run")))
@@ -3879,7 +3880,8 @@ async def _dispatch_tool(name: str, arguments: dict[str, Any] | None) -> list[Te
             ctx = work_loop_mod.WorkLoopContext(
                 board=_board_client(), list_runs=_list_runs, now=time.time(),
                 dry_run=dry_run, page_id=page_id, limit=limit, max_cards=max_cards,
-                reping=reping, platform=kanban_dispatch.PlatformClient(c, BASE))
+                reping=reping, platform=kanban_dispatch.PlatformClient(
+                    c, BASE, dispatcher_run_id=_caller_run_id(args)))
             # run_work_loop never raises BoardUnavailable itself — every loop
             # catches it internally and reports it in `errors` (code-review
             # finding, PR #36: a try/except here around this call was dead

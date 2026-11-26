@@ -455,9 +455,12 @@ class PlatformClient:
     builds its own.
     """
 
-    def __init__(self, client, base: str) -> None:
+    def __init__(self, client, base: str, dispatcher_run_id: str | None = None) -> None:
         self._c = client
         self._base = base.rstrip("/")
+        # Run that initiated an agent-invoked sweep (flow_handoff guard
+        # identity). None for the watchdog/routes, which are not agents.
+        self._dispatcher_run_id = dispatcher_run_id or None
 
     async def latest_run(self, page_id: str) -> dict | None:
         runs = await self.card_runs(page_id, limit=1)
@@ -513,6 +516,8 @@ class PlatformClient:
 
     async def dispatch(self, path: str, payload: dict) -> tuple[str, str, bool]:
         """Return the run ID, error, and whether a rejection was definitive."""
+        if self._dispatcher_run_id:
+            payload = {**payload, "dispatcher_run_id": self._dispatcher_run_id}
         try:
             resp = await self._c.post(f"{self._base}{path}", json=payload)
             if resp.status_code != 200:

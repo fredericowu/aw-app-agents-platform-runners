@@ -94,3 +94,35 @@ def test_provisioner_allowlist_keeps_flow_handoff():
     from agents_platform_runners_app import agent_provisioner as ap
     src = Path(ap.__file__).read_text()
     assert '"flow_handoff"' in src
+
+
+def _dispatch_via(dispatcher_run_id):
+    import asyncio
+    from agents_platform_runners_app import kanban_dispatch
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"run_id": "r1"})
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            return await kanban_dispatch.PlatformClient(
+                c, "http://x", dispatcher_run_id=dispatcher_run_id).dispatch(
+                    "/api/agents/debugger/run", {"input": "x"})
+    asyncio.run(go())
+    return seen[0]
+
+
+def test_ready_sweep_platform_client_forwards_initiating_run():
+    assert _dispatch_via("mgr-run")["dispatcher_run_id"] == "mgr-run"
+
+
+def test_ready_sweep_platform_client_stays_anonymous_for_watchdog():
+    assert "dispatcher_run_id" not in _dispatch_via(None)
+
+
+def test_both_mcp_sweep_entry_points_pass_the_caller_run():
+    import inspect
+    src = inspect.getsource(mcp_server._dispatch_tool)
+    assert src.count("dispatcher_run_id=_caller_run_id(args)") >= 2
