@@ -365,7 +365,8 @@ def dispatch_payload(card: dict, input_text: str, *, default_coder: str = "coder
 
 def resume_payload(run: dict, page_id: str, message: str, *,
                    callback_origin_run_id: str | None = None, call_me_back: bool = True,
-                   call_me_back_on: str | None = None) -> tuple[str, dict] | str:
+                   call_me_back_on: str | None = None,
+                   dispatcher_run_id: str | None = None) -> tuple[str, dict] | str:
     """``(path, body)`` to resume the card's session, or a string saying why
     it can't be resumed. A card whose last run has no session is a real,
     explainable state — not an exception."""
@@ -402,6 +403,11 @@ def resume_payload(run: dict, page_id: str, message: str, *,
     if armed and call_me_back_on:
         payload["call_me_back_on"] = call_me_back_on
     payload["call_me_back"] = armed
+    # Who is asking, armed or not: the backend's flow_handoff guard needs it
+    # even when no callback is requested (callback_origin_run_id is only sent
+    # when armed). Identity only — not a parent, no hop/card semantics.
+    if dispatcher_run_id:
+        payload["dispatcher_run_id"] = dispatcher_run_id
     return f"/api/agents/{agent_slug}/run", payload
 
 
@@ -449,9 +455,12 @@ class PlatformClient:
     builds its own.
     """
 
-    def __init__(self, client, base: str) -> None:
+    def __init__(self, client, base: str, dispatcher_run_id: str | None = None) -> None:
         self._c = client
         self._base = base.rstrip("/")
+        # Run that initiated an agent-invoked sweep (flow_handoff guard
+        # identity). None for the watchdog/routes, which are not agents.
+        self._dispatcher_run_id = dispatcher_run_id or None
 
     async def latest_run(self, page_id: str) -> dict | None:
         runs = await self.card_runs(page_id, limit=1)
@@ -507,6 +516,8 @@ class PlatformClient:
 
     async def dispatch(self, path: str, payload: dict) -> tuple[str, str, bool]:
         """Return the run ID, error, and whether a rejection was definitive."""
+        if self._dispatcher_run_id:
+            payload = {**payload, "dispatcher_run_id": self._dispatcher_run_id}
         try:
             resp = await self._c.post(f"{self._base}{path}", json=payload)
             if resp.status_code != 200:
