@@ -736,7 +736,9 @@ CLI_SPECS: dict[str, dict] = {
         "creds_dir": ".gemini", "creds_file": None,
         # First-populate copy only (see _agy_home_populated): these are runtime
         # output of past runs, ~125 MB of the ~129 MB, never read from a stage.
-        "creds_copy_deny": ("conversations", "brain", "log", "bin", "antigravity-cli/mcp"),
+        "creds_copy_deny": ("antigravity-cli/conversations", "antigravity-cli/brain",
+                            "antigravity-cli/log", "antigravity-cli/bin",
+                            "antigravity-cli/mcp"),
         "image_suffix": "gemini",
         "mount_bin": ".aw-workspace/antigravity-cli/.local/bin/agy",
     },
@@ -755,7 +757,9 @@ CLI_SPECS: dict[str, dict] = {
         "creds_dir": ".gemini", "creds_file": None,
         # First-populate copy only (see _agy_home_populated): these are runtime
         # output of past runs, ~125 MB of the ~129 MB, never read from a stage.
-        "creds_copy_deny": ("conversations", "brain", "log", "bin", "antigravity-cli/mcp"),
+        "creds_copy_deny": ("antigravity-cli/conversations", "antigravity-cli/brain",
+                            "antigravity-cli/log", "antigravity-cli/bin",
+                            "antigravity-cli/mcp"),
         "image_suffix": "gemini",
         "mount_bin": ".aw-workspace/antigravity-cli/.local/bin/agy",
     },
@@ -2583,6 +2587,18 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
                        f"/home/ubuntu/{creds_dir}/config.toml", ro=True)
         # Isolated run cwd (rw — the CLI writes its own session/project state here)
         _mount(isolated_rel, isolated_container_path, ro=False)
+
+    if cli in ("agy", "antigravity") and not creds_staged:
+        # Fallback home mounts (no host home bind / staging failed) share the
+        # same tool-cache dir across runs — isolate it the same way.
+        agy_toolcache = f"/home/ubuntu/{creds_dir}/{AGY_TOOLCACHE_REL}"
+        _fb_home = _real_home if direct_home_mount else Path(WORKSPACE_CONTAINER_DIR)
+        try:
+            _tc = _fb_home / creds_dir / AGY_TOOLCACHE_REL
+            _tc.mkdir(parents=True, exist_ok=True)
+            _tc.chmod(0o777)
+        except Exception:
+            log.warning("execute: could not prepare agy tool-cache mountpoint", exc_info=True)
 
     # Private per-run copy of ~/.claude.json (see _write_claude_json_seed). It
     # lives in the isolated run dir, already visible in the container in every

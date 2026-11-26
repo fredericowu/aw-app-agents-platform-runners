@@ -136,11 +136,15 @@ def _agy_env(monkeypatch, tmp_path):
     monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(tmp_path / "ws"))
     monkeypatch.setattr(execute_mod, "REAL_HOME", str(tmp_path / "home"))
     g = tmp_path / "home" / ".gemini"
-    for d in ("antigravity-cli", "conversations", "brain", "log", "config"):
+    for d in ("antigravity-cli", "config"):
         (g / d).mkdir(parents=True)
+    # real layout: the bulk dirs live UNDER antigravity-cli/
+    for d in ("conversations", "brain", "log", "bin"):
+        (g / "antigravity-cli" / d).mkdir()
     (g / "antigravity-cli" / "antigravity-oauth-token").write_text("tok")
     (g / "antigravity-cli" / "mcp").mkdir()
-    (g / "conversations" / "c.pb").write_text("x" * 100)
+    (g / "antigravity-cli" / "conversations" / "c.pb").write_text("x" * 100)
+    (g / "antigravity-cli" / "bin" / "agy").write_text("x" * 100)
     (g / "config" / "settings.json").write_text("{}")
     (tmp_path / "ws").mkdir(parents=True, exist_ok=True)
     return g
@@ -174,8 +178,8 @@ def test_agy_unpopulated_home_first_copy_skips_bulk(monkeypatch, tmp_path):
     staged = _staged(tmp_path)
     assert (staged / "antigravity-cli" / "antigravity-oauth-token").is_file()
     assert (staged / "config" / "settings.json").is_file()
-    for bulk in ("conversations", "brain", "log"):
-        assert not (staged / bulk).exists()
+    for bulk in ("conversations", "brain", "log", "bin"):
+        assert not (staged / "antigravity-cli" / bulk).exists()
     assert not (staged / "antigravity-cli" / "mcp").exists()
 
 
@@ -189,3 +193,22 @@ def test_codex_kwargs_have_no_tmpfs(monkeypatch, tmp_path):
     job.update(cli="codex", model="gpt-5")
     _i, _a, kwargs, _m = execute_mod._build_container_kwargs(job)
     assert "tmpfs" not in kwargs
+
+
+def test_agy_staging_failure_fallback_still_gets_tmpfs(monkeypatch, tmp_path):
+    _agy_env(monkeypatch, tmp_path)
+
+    def boom(*a, **k):
+        raise OSError("staging broke")
+
+    monkeypatch.setattr(execute_mod.shutil, "copytree", boom)
+    _i, _a, kwargs, _m = execute_mod._build_container_kwargs(_job("agy-fb"))
+    assert kwargs["tmpfs"] == {"/home/ubuntu/.gemini/antigravity-cli/mcp": "mode=1777"}
+
+
+def test_agy_no_host_home_bind_fallback_gets_tmpfs(monkeypatch, tmp_path):
+    _agy_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "")
+    monkeypatch.setenv("AW_WORKSPACE_HOME_HOST_DIR", "")
+    _i, _a, kwargs, _m = execute_mod._build_container_kwargs(_job("agy-nohome"))
+    assert kwargs["tmpfs"] == {"/home/ubuntu/.gemini/antigravity-cli/mcp": "mode=1777"}
