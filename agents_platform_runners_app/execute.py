@@ -81,6 +81,7 @@ from pathlib import Path
 from typing import Any
 
 from . import execution_index
+from . import funnel_hook
 from . import warm_pool
 from .codex_usage import CodexTurnUsageCapture
 from .model_provenance import codex_config_model, launch_model, model_args_are_unambiguous
@@ -4025,6 +4026,7 @@ def _run_job_blocking(job: dict, redis_url: str) -> None:
                 client = docker_sdk.DockerClient(base_url="unix://" + CONTAINER_SOCKET)
                 _dispatch_warm_turn(client, job, redis_url, r)
                 execution_index.start_after_stream_done(run_id, redis_url)
+                funnel_hook.start(run_id, job)
             except warm_pool.WarmPoolFull as e:
                 # The pool ceiling is a REFUSAL to go warm, not a failure of
                 # the run: fall through to the cold/ephemeral path below,
@@ -4247,6 +4249,7 @@ def _run_job_blocking(job: dict, redis_url: str) -> None:
                 _publish_line(r, run_id, json.dumps(usage_event))
         _publish_done(r, run_id, returncode)
         execution_index.start(run_id)
+        funnel_hook.start(run_id, job)
         _forget_run(r, run_id)
         try:
             r.close()
