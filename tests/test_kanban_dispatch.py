@@ -963,3 +963,78 @@ def test_partial_report_does_not_swallow_a_later_reproduced_failure_on_same_revi
     later = _report(board, platform)
     assert not later.get("reused")
     assert len(board.filed) == 2 and board.filed[1]["findings"] == [ISSUE]
+
+
+# ── attention sweep: one driver prompt per card ─────────────────────────
+
+class _AttnBoard:
+    def __init__(self, cards, bodies=None):
+        self._cards, self._bodies = cards, bodies or {}
+
+    def need_attention(self, *, limit, reping):
+        self.asked = (limit, reping)
+        return {"has_work": bool(self._cards), "cards": self._cards}
+
+    def card(self, page_id, **_):
+        return self._bodies.get(page_id, {"page_id": page_id, "body_md": "body", "comments_md": ""})
+
+
+class _AttnPlatform:
+    def __init__(self, active=()):
+        self.active, self.dispatched, self.validated = set(active), [], []
+
+    async def validate_agent(self, slug, **_):
+        self.validated.append(slug)
+
+    async def latest_run(self, page_id):
+        return {"id": "r0", "status": "running"} if page_id in self.active else None
+
+    async def dispatch(self, path, payload):
+        self.dispatched.append((path, payload))
+        return f"run-{len(self.dispatched)}", "", False
+
+
+def test_attention_sweep_fires_one_po_run_per_card_with_its_own_prompt():
+    cards = [{"page_id": "a", "title": "A", "status": "In Progress", "agent_slug": "coder"},
+             {"page_id": "b", "title": "B", "status": "Need Human"}]
+    plat = _AttnPlatform()
+    out = asyncio.run(kd.sweep_attention(_AttnBoard(cards), plat))
+    assert out["dispatched"] == 2 and out["considered"] == 2
+    assert plat.validated == ["product-owner"]
+    paths = sorted(p for p, _ in plat.dispatched)
+    # the card's own agent_slug (coder) must NOT win: the PO drives every card
+    assert paths == ["/api/agents/product-owner/run"] * 2
+    by_card = {pl["notion_task_id"]: pl["input"]["input"] for _, pl in plat.dispatched}
+    assert set(by_card) == {"a", "b"}
+    assert "page_id=a" in by_card["a"] and "page_id=b" not in by_card["a"]
+    assert "driving this card to completion" in by_card["a"]
+
+
+def test_attention_sweep_skips_a_card_with_a_run_in_flight_and_survives_one_failure():
+    class Boom(_AttnBoard):
+        def card(self, page_id, **kw):
+            if page_id == "bad":
+                raise RuntimeError("kaboom")
+            return super().card(page_id, **kw)
+
+    cards = [{"page_id": "busy"}, {"page_id": "bad"}, {"page_id": "ok"}]
+    plat = _AttnPlatform(active={"busy"})
+    out = asyncio.run(kd.sweep_attention(Boom(cards), plat))
+    rows = {r["page_id"]: r for r in out["results"]}
+    assert rows["busy"]["skipped"] == "run-already-in-flight"
+    assert "kaboom" in rows["bad"]["error"]
+    assert rows["ok"]["run_id"] and out["dispatched"] == 1
+
+
+def test_attention_sweep_with_no_work_dispatches_nothing_and_validates_nothing():
+    plat = _AttnPlatform()
+    out = asyncio.run(kd.sweep_attention(_AttnBoard([]), plat))
+    assert out == {"has_work": False, "considered": 0, "dispatched": 0,
+                   "dry_run": False, "results": []}
+    assert plat.dispatched == [] and plat.validated == []
+
+
+def test_attention_sweep_dry_run_dispatches_nothing():
+    plat = _AttnPlatform()
+    out = asyncio.run(kd.sweep_attention(_AttnBoard([{"page_id": "a"}]), plat, dry_run=True))
+    assert plat.dispatched == [] and out["results"][0]["would_dispatch"] == "/api/agents/product-owner/run"

@@ -14,6 +14,7 @@ that the dependency actually did its job, not just that it's declared.
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
@@ -163,6 +164,48 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
             return {"ok": False, "reason": row.get("error") or row.get("skipped") or "no run started"}
         return {"ok": True, "card_title": row["title"], "agent_slug": row["agent_slug"],
                 "run_id": row["run_id"]}
+
+    # Strong references to in-flight sweeps: the http node that calls this
+    # route gives up after 30s, but the dispatches must not be cancelled with it.
+    attention_tasks: set[asyncio.Task] = set()
+
+    @app.post("/kanban/sweep-attention", dependencies=[Depends(require_execute_secret)])
+    async def sweep_attention(data: dict = Body(default_factory=dict)) -> dict:
+        """One driver run per card the board says needs attention (the
+        ``kanban-sweep`` workflow's dispatch step). Waits up to 24s for the
+        per-card results, then answers ``pending`` and lets the dispatches
+        finish in the background."""
+        token = cfg.get("agents_platform_token")
+        workspace = kanban_dispatch._this_workspace()
+        if not token:
+            raise HTTPException(503, f"Agents Platform dispatcher unavailable in workspace {workspace!r}")
+        limit = data.get("limit", kanban_dispatch.ATTENTION_DEFAULT_LIMIT)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50:
+            raise HTTPException(422, "limit must be an integer between 1 and 50")
+        board = kanban_dispatch.BoardClient(
+            base_url=kanban_dispatch.board_base_url(prefer_loopback=True))
+
+        async def _run() -> dict:
+            async with httpx.AsyncClient(
+                    timeout=30, headers={"Authorization": f"Bearer {token}"}) as client:
+                return await kanban_dispatch.sweep_attention(
+                    board, kanban_dispatch.PlatformClient(client, platform_base_mod.resolve(cfg)),
+                    limit=limit, dry_run=bool(data.get("dry_run")),
+                    agent_slug=data.get("agent_slug") or kanban_dispatch.ATTENTION_DRIVER_AGENT)
+
+        task = asyncio.create_task(_run())
+        attention_tasks.add(task)
+        task.add_done_callback(attention_tasks.discard)
+        done, _ = await asyncio.wait({task}, timeout=24)
+        if not done:
+            return {"ok": True, "pending": True,
+                    "detail": "dispatches still running; check list_runs for the driver runs"}
+        try:
+            return {"ok": True, **task.result()}
+        except kanban_dispatch.BoardUnavailable as exc:
+            raise HTTPException(502, f"board unavailable: {exc}") from exc
+        except kanban_dispatch.CoderDispatchError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/status")
     async def status() -> dict:
