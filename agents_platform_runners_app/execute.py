@@ -4044,6 +4044,7 @@ def _run_job_blocking(job: dict, redis_url: str) -> None:
                 }))
                 _publish_done(r, run_id, 1)
                 execution_index.start(run_id)
+                funnel_hook.start(run_id, job)
         finally:
             # The cold path below still needs `r` (and closes it itself on
             # every one of its own exits), so this close belongs only to the
@@ -4121,6 +4122,7 @@ def _run_job_blocking(job: dict, redis_url: str) -> None:
         }))
         _publish_done(r, run_id, 1)
         execution_index.start(run_id)
+        funnel_hook.start(run_id, job)
         return
 
     # A raw_command (monitor run) job carries its own timeout_seconds — the

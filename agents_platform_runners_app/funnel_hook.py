@@ -1,4 +1,4 @@
-"""Activation-funnel ping: tell aw-backend a run actually SUCCEEDED.
+"""Activation-funnel ping: tell aw-backend a run SUCCEEDED, or first FAILED.
 
 Card 4175bf3b (funnel-design-rev2-2026-11-26). A sibling of the
 execution-index hook, called from the same two post-run sites in execute.py,
@@ -41,6 +41,10 @@ _MAX_CONCURRENT = 8
 _COMPACT_INITIATORS = {"auto_compact", "pending_compact"}
 
 _latch: set[str] = set()
+# One failure ping per boot per workspace: aw-backend keeps one run_failed row
+# per workspace, so after any 2xx (including recorded=false for a hosted
+# workspace) there is nothing more to say. Unset on a non-2xx.
+_failed_latched = False
 _latch_lock = threading.Lock()
 # Bounds outstanding pollers; the funnel is best-effort, so a run that finds
 # every slot busy is simply not reported (the next success will be).
@@ -56,13 +60,24 @@ def _link() -> tuple[str, str, str] | None:
     return backend, workspace, token
 
 
-def _counts(run: dict) -> bool:
-    if run.get("status") != "success" or run.get("category") != "work":
-        return False
+def _counts(run: dict) -> str:
+    """Classify a finalized AP-MT Run: "succeeded", "failed" or "ignore".
+
+    Failed = status error, category work, not a compaction, and not a
+    re-dispatched retry (``retried_from_run_id`` set). Cancelled and every
+    other status is ignored.
+    """
+    status = run.get("status")
+    if status not in ("success", "error") or run.get("category") != "work":
+        return "ignore"
     raw = run.get("input")
     # AP-MT stores the prompt as {"input": "<text>"}; tolerate a bare string.
     prompt = str((raw.get("input") if isinstance(raw, dict) else raw) or "").strip()
-    return not (prompt == "/compact" or run.get("initiator_kind") in _COMPACT_INITIATORS)
+    if prompt == "/compact" or run.get("initiator_kind") in _COMPACT_INITIATORS:
+        return "ignore"
+    if status == "success":
+        return "succeeded"
+    return "ignore" if run.get("retried_from_run_id") else "failed"
 
 
 def _latch_key(model: str | None, model_slug: str | None) -> str:
@@ -93,31 +108,39 @@ def _wait_finalized(run_id: str, cfg: dict) -> dict | None:
 def report_run(run_id: str, job: dict) -> bool:
     """Blocking body of the hook; returns True when a ping was accepted.
     Never raises."""
+    global _failed_latched
     try:
         link = _link()
         if link is None or job.get("raw_command"):
             return False
         model = model_identifier(job.get("model"))
         run = _wait_finalized(run_id, execution_index._config)
-        if run is None or not _counts(run):
+        outcome = _counts(run) if run is not None else "ignore"
+        if outcome == "ignore":
             return False
         model_slug = model_identifier(run.get("model_slug"))
+        failed = outcome == "failed"
         key = _latch_key(model, model_slug)
-        if key in _latch:
+        if (_failed_latched if failed else key in _latch):
             return False
         backend, workspace, token = link
+        # Raw facts only: no error text, prompt or run id ever leaves here.
         resp = httpx.post(
             f"{backend}/api/workspaces/{workspace}/funnel/events",
-            json={"event": "run_succeeded", "model": model,
-                  "model_slug": model_slug, "cli": job.get("cli") or "claude"},
+            json={"event": "run_failed" if failed else "run_succeeded",
+                  "model": model, "model_slug": model_slug,
+                  "cli": job.get("cli") or "claude"},
             headers={"Authorization": f"Bearer {token}"}, timeout=15.0,
         )
         resp.raise_for_status()
         with _latch_lock:
-            _latch.add(key)
+            if failed:
+                _failed_latched = True
+            else:
+                _latch.add(key)
         return True
     except Exception:  # noqa: BLE001 - the funnel must never touch a run
-        log.warning("funnel: run_succeeded ping failed run=%s", run_id, exc_info=True)
+        log.warning("funnel: ping failed run=%s", run_id, exc_info=True)
         return False
 
 

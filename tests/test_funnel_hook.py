@@ -23,8 +23,10 @@ def _env(monkeypatch):
     monkeypatch.setenv("AW_WORKSPACE", "ws1")
     monkeypatch.setenv("AW_WORKSPACE_HOST_TOKEN", "awlk_x")
     funnel_hook._latch.clear()
+    funnel_hook._failed_latched = False
     yield
     funnel_hook._latch.clear()
+    funnel_hook._failed_latched = False
 
 
 class _Resp:
@@ -59,7 +61,7 @@ def test_success_work_run_pings_with_raw_facts(monkeypatch):
 
 
 @pytest.mark.parametrize("patch", [
-    {"status": "error"}, {"status": "cancelled"}, {"status": "running"},
+    {"status": "cancelled"}, {"status": "running"},
     {"category": "monitor"}, {"category": None},
     {"input": "/compact"}, {"input": {"input": "/compact"}},
     {"initiator_kind": "auto_compact"},
@@ -156,3 +158,91 @@ def test_wait_finalized_polls_until_ended(monkeypatch):
     monkeypatch.setattr(funnel_hook.time, "sleep", lambda _s: None)
     run = funnel_hook._wait_finalized("r1", {})
     assert run["status"] == "success" and seq == []
+
+
+# ---- run_failed (first-failed-run capture, rev 3) ---------------------------
+
+ERR_RUN = {**OK_RUN, "status": "error", "error": "boom sk-secret", "retried_from_run_id": None}
+
+
+def test_counts_three_way_outcome():
+    assert funnel_hook._counts(OK_RUN) == "succeeded"
+    assert funnel_hook._counts(ERR_RUN) == "failed"
+    assert funnel_hook._counts({**ERR_RUN, "retried_from_run_id": "r0"}) == "ignore"
+    for patch in ({"status": "cancelled"}, {"status": "running"}, {"category": "monitor"},
+                  {"input": "/compact"}, {"input": {"input": "/compact"}},
+                  {"initiator_kind": "auto_compact"}):
+        assert funnel_hook._counts({**ERR_RUN, **patch}) == "ignore", patch
+
+
+def test_failed_run_pings_with_the_same_three_raw_facts_only(monkeypatch):
+    calls = _install(monkeypatch, {**ERR_RUN, "prompt": "secret prompt"})
+    assert funnel_hook.report_run("r1", JOB) is True
+    (_url, body, _h), = calls
+    assert body == {"event": "run_failed", "model": "claude-haiku-4-5",
+                    "model_slug": "haiku-4-5", "cli": "claude"}
+    assert "boom" not in repr(body) and "r1" not in repr(body)
+
+
+def test_failed_run_without_model_still_pings(monkeypatch):
+    calls = _install(monkeypatch, {**ERR_RUN, "model_slug": None})
+    assert funnel_hook.report_run("r1", {"cli": "claude"}) is True
+    assert calls[0][1]["model"] is None and calls[0][1]["model_slug"] is None
+
+
+def test_retried_and_cancelled_failures_never_ping(monkeypatch):
+    calls = _install(monkeypatch, {**ERR_RUN, "retried_from_run_id": "r0"})
+    assert funnel_hook.report_run("r1", JOB) is False
+    monkeypatch.setattr(funnel_hook, "_wait_finalized",
+                        lambda *_a, **_k: {**ERR_RUN, "status": "cancelled"})
+    assert funnel_hook.report_run("r2", JOB) is False
+    assert calls == []
+
+
+def test_raw_command_failure_never_pings(monkeypatch):
+    calls = _install(monkeypatch, ERR_RUN)
+    assert funnel_hook.report_run("r1", {**JOB, "raw_command": "sleep 1"}) is False
+    assert calls == []
+
+
+def test_failure_latch_is_one_per_boot_and_separate_from_success(monkeypatch):
+    calls = _install(monkeypatch, ERR_RUN)
+    assert funnel_hook.report_run("r1", JOB) is True
+    assert funnel_hook.report_run("r2", JOB) is False
+    assert funnel_hook.report_run("r3", {**JOB, "model": "claude-opus-5-5"}) is False
+    monkeypatch.setattr(funnel_hook, "_wait_finalized", lambda *_a, **_k: OK_RUN)
+    assert funnel_hook.report_run("r4", JOB) is True           # success unaffected
+    assert [c[1]["event"] for c in calls] == ["run_failed", "run_succeeded"]
+
+
+def test_failure_latch_stays_unset_on_non_2xx(monkeypatch):
+    _install(monkeypatch, ERR_RUN, post=lambda: _Resp(400))
+    assert funnel_hook.report_run("r1", JOB) is False
+    assert funnel_hook._failed_latched is False
+    monkeypatch.setattr(funnel_hook.httpx, "post", lambda *a, **k: _Resp())
+    assert funnel_hook.report_run("r2", JOB) is True
+    assert funnel_hook._failed_latched is True
+
+
+def test_failure_ping_never_raises(monkeypatch):
+    _install(monkeypatch, ERR_RUN)
+    def boom(*a, **k):
+        raise RuntimeError("net down")
+    monkeypatch.setattr(funnel_hook.httpx, "post", boom)
+    assert funnel_hook.report_run("r1", JOB) is False
+
+
+def test_execute_failure_exits_start_the_hook_but_abort_exit_does_not():
+    import re
+    src = (ROOT / "agents_platform_runners_app" / "execute.py").read_text()
+
+    def block(marker):
+        i = src.index(marker)
+        return src[i:i + 700]
+
+    warm = block('log.exception("execute: warm dispatch failed run=%s"')
+    spawn = block('log.exception("execute: container spawn failed run=%s"')
+    abort = block('log.info("execute: run=%s aborted before its container was spawned"')
+    assert "funnel_hook.start(run_id, job)" in warm
+    assert "funnel_hook.start(run_id, job)" in spawn
+    assert "funnel_hook.start" not in abort.split("return", 1)[0]
