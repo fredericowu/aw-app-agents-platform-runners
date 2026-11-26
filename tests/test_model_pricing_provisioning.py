@@ -79,17 +79,20 @@ def test_reconcile_with_other_fields_never_forwards_pricing_in_generic_put():
     assert generic[2] == {"display_name": "N"}
 
 
-def test_manifest_codex_models_are_explicit_zero_and_others_unset():
+def test_manifest_codex_models_are_priced_and_others_unset():
     import pathlib
+    from agents_platform_runners_app.agent_provisioner import effective_pricing
     d = json.loads((pathlib.Path(__file__).parent.parent / "aw-app.json").read_text())
     for m in d["contributes"]["agents"]["models"]:
-        if m["params"].get("cli") == "codex":
-            from agents_platform_runners_app.agent_provisioner import effective_pricing
-            got = effective_pricing(m)
-            assert {k: got[k] for k in ("input", "output", "cache_read", "cache_write")} == \
-                {k: PRICING[k] for k in ("input", "output", "cache_read", "cache_write")}, m["slug"]
-        else:
+        if m["params"].get("cli") == "codex" or m["params"].get("runner") == "aw-codex":
+            assert effective_pricing(m)["revision"] >= 2, m["slug"]
+        elif m["slug"] not in PRICED_NON_CODEX_FLAGGED:
             assert "pricing" not in m, m["slug"]  # no invented tariffs
+
+
+# openai-provider Codex-family models priced explicitly (see test_manifest_list_prices_*).
+PRICED_NON_CODEX_FLAGGED = {"gpt-6-sol", "gpt-6-1-sol", "gpt-6-1-terra", "gpt-6-luna", "gpt-6-astra",
+                            "openai-gpt-5-6-sol", "openai-gpt-5-6-luna", "openai-gpt-5-6-terra"}
 
 
 # ---- review round 1 ----
@@ -168,3 +171,27 @@ def test_non_codex_entry_stays_unpriced():
              "params": {"cli": "claude"}}
     prov(p).seed("agents-platform-runners", {"models": [entry]})
     assert not [c for c in p.calls if c[0] == "PUT"]
+
+
+def test_manifest_list_prices_for_codex_models():
+    from pathlib import Path
+    manifest = json.loads((Path(__file__).resolve().parents[1] / "aw-app.json").read_text(encoding="utf-8"))
+    by = {m["slug"]: m.get("pricing") for m in manifest["contributes"]["agents"]["models"]}
+    g5 = {"revision": 2, "input": "1.25", "output": "10", "cache_read": "0.125", "cache_write": "0"}
+    sol = {"revision": 2, "input": "2", "output": "10", "cache_read": "0.2", "cache_write": "0"}
+    low = {"revision": 2, "input": "1", "output": "5", "cache_read": "0.05", "cache_write": "0"}
+    expected = {}
+    expected.update({s: g5 for s in ("codex-runner-gpt-5", "codex-cli-gpt-5")})
+    expected.update({s: sol for s in ("gpt-6-sol", "gpt-6-1-sol", "openai-gpt-5-6-sol",
+                                       "codex-runner-gpt-6-sol", "codex-runner-gpt-6-1-sol")})
+    expected.update({s: low for s in ("gpt-6-1-terra", "gpt-6-luna", "gpt-6-astra",
+                                       "openai-gpt-5-6-terra", "openai-gpt-5-6-luna",
+                                       "codex-runner-gpt-6-1-terra", "codex-runner-gpt-6-luna",
+                                       "codex-runner-gpt-6-astra")})
+    for slug, price in expected.items():
+        assert by[slug] == price, slug
+    # no Codex-flagged model may be left at the $0 placeholder
+    from agents_platform_runners_app.agent_provisioner import is_codex_model
+    for m in manifest["contributes"]["agents"]["models"]:
+        if is_codex_model(m):
+            assert m["pricing"]["output"] != "0", m["slug"]

@@ -181,6 +181,16 @@ def _own_model_slugs() -> frozenset[str]:
 
 _OWN_MODELS: frozenset[str] | None = None
 
+# Manifest (aw-app.json) list prices, USD per 1M tokens (input/output/cache_read/
+# cache_write), revision 2. API-equivalent list prices, not what the platform is
+# billed (Codex runs outside it):
+#   * GPT-5 family (codex-runner-gpt-5, codex-cli-gpt-5): 1.25 / 10 / 0.125 / 0.
+#     CONFIRMED: https://developers.openai.com/docs/models/gpt-5
+#   * Sol tier (gpt-6-sol, gpt-6-1-sol, gpt-5-6-sol and runner variants):
+#     2 / 10 / 0.2 / 0. ESTIMATE (third-party guide
+#     https://developer.puter.com/tutorials/openai-api-pricing/), not confirmed.
+#   * Terra / Luna / Astra tiers: 1 / 5 / 0.05 / 0. ESTIMATE, same source.
+# Contributed defaults never override user-edited prices (AP-MT rule).
 #: Every Codex model this app registers MUST carry a price definition so run
 #: cost can be computed. Codex here is billed outside the platform, so the
 #: default is an explicit zero (cost_status=known, cost 0) rather than unpriced.
