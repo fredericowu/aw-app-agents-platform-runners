@@ -1168,3 +1168,39 @@ def test_handoff_never_builds_with_a_pm_or_po_stamped_on_the_card(stamped):
     receipt = asyncio.run(_handoff(board, platform, revision="design:1"))
     assert receipt["recipient"] == "coder"
     assert platform.dispatched[0][0] == "/api/agents/coder/run"
+
+
+def test_provisional_deadline_counts_from_the_start_of_the_request(monkeypatch):
+    """Setup (iteration read) eats most of the budget, so the provisional write
+    must land after the REMAINING time, not a fresh 20s."""
+    monkeypatch.setattr(kd, "ATTENTION_PROVISIONAL_AFTER_S", 0.15)
+
+    class Plat(_PlanPlatform):
+        async def running_iteration(self, slug):
+            await asyncio.sleep(0.12)
+            return await super().running_iteration(slug)
+
+        async def dispatch(self, path, payload):
+            await asyncio.sleep(0.2)
+            return await super().dispatch(path, payload)
+
+    plat = Plat(["a"])
+    times = []
+    orig = plat.annotate
+
+    async def stamped(slug, it, items):
+        times.append(asyncio.get_running_loop().time())
+        await orig(slug, it, items)
+
+    plat.annotate = stamped
+    asyncio.run(kd.sweep_attention(_AttnBoard([{"page_id": "a"}]), plat, plan_slug="kanban-sweep"))
+    assert [w[2][0]["action"] for w in plat.writes][0] == "dispatch-pending"
+    # provisional fired ~0.15s after start (not 0.12 + 0.15), i.e. before dispatch ended at ~0.32
+    assert times[1] - times[0] > 0.1
+
+
+def test_ledger_action_names_the_agent_that_was_dispatched():
+    plat = _PlanPlatform(["a"])
+    asyncio.run(kd.sweep_attention(_AttnBoard([{"page_id": "a"}]), plat, plan_slug="kanban-sweep",
+                                   agent_slug="product-owner"))
+    assert plat.writes[0][2][0]["action"] == "dispatched-product-owner"

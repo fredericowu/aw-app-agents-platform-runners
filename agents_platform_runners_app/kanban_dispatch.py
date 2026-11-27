@@ -763,6 +763,7 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
     (action + why) for every gate candidate, so the iteration can close ``done``; a failure to
     annotate is reported under ``annotation`` and never fails the dispatches.
     """
+    started = asyncio.get_running_loop().time()  # the route's 24s clock starts with this task
     annotator = await _open_annotator(platform, plan_slug) if plan_slug and not dry_run else None
     attention = await asyncio.to_thread(board.need_attention, limit=limit, reping=True)
     cards = attention.get("cards") if isinstance(attention, dict) else None
@@ -808,7 +809,8 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
     summaries = {c.get("page_id"): c for c in cards}
     gathered = asyncio.ensure_future(asyncio.gather(*(_one(c) for c in cards)))
     if annotator:
-        done, _ = await asyncio.wait({gathered}, timeout=ATTENTION_PROVISIONAL_AFTER_S)
+        remaining = ATTENTION_PROVISIONAL_AFTER_S - (asyncio.get_running_loop().time() - started)
+        done, _ = await asyncio.wait({gathered}, timeout=max(0.0, remaining))
         if not done:
             await annotator.write_provisional()
     results = list(await gathered)
@@ -840,7 +842,7 @@ def annotation_for(row: dict, summary: dict) -> dict:
         return {"action": str(row["skipped"]), "why": str(why)[:500]}
     reason = (summary or {}).get("reason") or ", ".join(
         (summary or {}).get("reasons") or []) or "flagged by the board"
-    return {"action": "dispatched-project-manager",
+    return {"action": f"dispatched-{row.get('agent_slug') or 'unknown'}",
             "why": f"{reason}; run {row.get('run_id')}"[:500]}
 
 
