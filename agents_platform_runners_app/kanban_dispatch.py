@@ -464,6 +464,31 @@ class PlatformClient:
             raise RuntimeError(f"Card-bound run lookup failed for {page_id} (HTTP {resp.status_code})")
         return resp.json() or []
 
+    async def running_iteration(self, plan_slug: str) -> tuple[str, list[str]] | None:
+        """(iteration id, gate-candidate card ids) of the plan's running iteration, else None.
+        Candidates come from the iteration ledger (the gate node's recorded output)."""
+        resp = await self._c.get(f"{self._base}/api/plans/{plan_slug}/iterations",
+                                 params={"limit": 5})
+        if resp.status_code != 200:
+            raise RuntimeError(f"plan iterations lookup failed (HTTP {resp.status_code})")
+        running = next((i for i in resp.json() or [] if i.get("status") == "running"), None)
+        if not running:
+            return None
+        ledger = await self._c.get(
+            f"{self._base}/api/plans/{plan_slug}/iterations/{running['id']}/ledger")
+        if ledger.status_code != 200:
+            raise RuntimeError(f"iteration ledger lookup failed (HTTP {ledger.status_code})")
+        rows = (ledger.json() or {}).get("rows") or []
+        return running["id"], [r["card"] for r in rows if r.get("gate_candidate")]
+
+    async def annotate(self, plan_slug: str, iteration_id: str, items: list[dict]) -> None:
+        resp = await self._c.post(
+            f"{self._base}/api/plans/{plan_slug}/iterations/{iteration_id}/annotations",
+            json={"items": items})
+        if resp.status_code != 200:
+            raise RuntimeError(f"annotation write failed (HTTP {resp.status_code}): "
+                               f"{resp.text[:200]}")
+
     async def return_to_caller(self, run_id: str, message: str) -> dict:
         """Wake whoever dispatched ``run_id``. A no-op on the platform side when
         the run already has ``call_me_back``, since that path delivers on finish."""
@@ -663,26 +688,48 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
             "dry_run": dry_run, "results": results}
 
 
-ATTENTION_DRIVER_AGENT = "product-owner"
+ATTENTION_DRIVER_AGENT = "project-manager"
 ATTENTION_DEFAULT_LIMIT = 25
 ATTENTION_CONCURRENCY = 4
+# The route answers `pending` after 24s; a provisional annotation lands first.
+ATTENTION_PROVISIONAL_AFTER_S = 20.0
 
 _DRIVER_BRIEF = (
-    "You are driving this card to completion. Nothing else will pick it up.\n"
-    "1. Read the card and its comments, then decide the single next step that moves it forward.\n"
-    "2. Dispatch whatever agent that step needs (architect for design, coder for implementation, "
-    "qa for verification, debugger for a failure) with run_agent_async, passing this card's "
-    "page_id as notion_task_id and quoting what the agent needs. Do not do their work yourself.\n"
+    "You are the Project Manager driving this card. Nothing else will pick it up. "
+    "Your contract is the aw-agent-project-manager skill; follow it.\n"
+    "1. Read the card, its comments and run history. Search Q&A (qa_search) and the knowledge "
+    "base for the blocker before believing it needs a human, and look for the server-side "
+    "trace of whatever it waits on.\n"
+    "2. Unblock it: resume the card's own agent with evidence (invoke_kanban_agent) or dispatch "
+    "the agent that owns the missing decision (architect design, product-owner scope, coder "
+    "build, debugger failure, qa verify), always passing this card's page_id. If that agent "
+    "cannot unblock it, try the next. Do not do their work yourself; do not stack a run on a "
+    "card with one in flight.\n"
     "3. An epic (the card has ChildCards) is its children: dispatch every open Backlog or Ready "
-    "child to its own agent, and move the parent to Done once every child is Done, Self-closed "
-    "or Archived.\n"
-    "4. If a PR for this card is merged and its acceptance is met, close the card. If a run is "
-    "already in flight for it, do nothing.\n"
-    "5. Escalate to Need Human only for a decision that truly needs the owner (spend, credentials, "
-    "irreversible action on real data, product call); state the question and your recommendation.\n"
-    "6. Finish with a terminal action (mark_flow_done, or an explicit hand-off) and a one-line "
-    "summary of what you dispatched or decided."
+    "child, and close the parent only once every child is Done, Self-closed or Archived.\n"
+    "4. Add every blocker answer that was not already in Q&A with qa_propose_create, tagged "
+    "unblocking.\n"
+    "5. Never move a card to Planned, and never move a Need Human card while it waits. A human "
+    "is only for spend, credentials only the owner holds, an irreversible action on real data, "
+    "or a product call: send ONE ask_human with the exact ask and your recommendation, verify "
+    "it is pending, stamp SweepBlock `routed-human|1|<iso>|<the ask>`, and end the turn.\n"
+    "6. End the turn with exactly one of: a dispatch/resume, a pending ask_human, or "
+    "mark_flow_done (Done needs a real qa_run_id or a justified qa_not_needed)."
 )
+
+
+def human_judged_block(sweep_block: str | None) -> str | None:
+    """The detail of a SweepBlock that says an agent concluded only a human can act, else None.
+
+    Same rule as aw-app-notion ``_reping_human_judged`` (notion_app/kanban/cards.py): at least
+    four ``|`` fields and either ``routed-human`` first or ``escalated`` second. Detail is free
+    text and may contain ``|``. Anything malformed is "not judged"."""
+    parts = (sweep_block or "").strip().split("|")
+    if len(parts) < 4:
+        return None
+    if parts[0].strip() == "routed-human" or parts[1].strip() == "escalated":
+        return "|".join(parts[3:]).strip() or "human-judged"
+    return None
 
 
 def build_driver_input(card: dict, summary: dict | None = None) -> str:
@@ -700,16 +747,24 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
                           limit: int = ATTENTION_DEFAULT_LIMIT,
                           agent_slug: str = ATTENTION_DRIVER_AGENT,
                           dry_run: bool = False,
+                          plan_slug: str | None = None,
                           default_target_slug: str = DEFAULT_TARGET_SLUG) -> dict:
     """Fire one driver prompt per card the board says needs attention.
 
     Replaces handing the whole list to the Manager: each card gets its own
-    run of ``agent_slug`` (the Product Owner), whose only job is to drive that
+    run of ``agent_slug`` (the Project Manager), whose only job is to drive that
     card to completion and dispatch whatever agent it needs. No claim and no
     status move: the card stays where it is, the driver moves it. A card with
     a run already pending/running is skipped, so a repeat tick never stacks a
-    second driver on the same card. One card's failure never ends the pass.
+    second driver on the same card, and a Need Human card parked by a human-judged SweepBlock is
+    skipped (``parked-on-human``). One card's failure never ends the pass.
+
+    With ``plan_slug`` the pass also writes the plan's running iteration's ledger annotations
+    (action + why) for every gate candidate, so the iteration can close ``done``; a failure to
+    annotate is reported under ``annotation`` and never fails the dispatches.
     """
+    started = asyncio.get_running_loop().time()  # the route's 24s clock starts with this task
+    annotator = await _open_annotator(platform, plan_slug) if plan_slug and not dry_run else None
     attention = await asyncio.to_thread(board.need_attention, limit=limit, reping=True)
     cards = attention.get("cards") if isinstance(attention, dict) else None
     cards = cards if isinstance(cards, list) else []
@@ -723,11 +778,17 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
         row: dict = {"page_id": page_id, "title": summary.get("title")}
         async with sem:
             try:
+                parked = _parked_on_human(summary)
+                if parked:
+                    return {**row, "skipped": "parked-on-human", "detail": parked}
                 latest = await platform.latest_run(page_id)
                 if latest and latest.get("status") in ACTIVE_RUN_STATUSES:
                     return {**row, "skipped": "run-already-in-flight", "run_id": latest.get("id")}
                 card = {**summary, **(await asyncio.to_thread(board.card, page_id))}
                 row["title"] = card.get("title")
+                parked = _parked_on_human(card)
+                if parked:
+                    return {**row, "skipped": "parked-on-human", "detail": parked}
                 if QA_FINDINGS_TAG in _card_tags(card):
                     return {**row, "skipped": "qa-findings-card"}
                 path, payload = dispatch_payload(
@@ -745,10 +806,104 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
                 log.warning("attention sweep: card %s failed", page_id, exc_info=True)
                 return {**row, "error": str(exc)}
 
-    results = list(await asyncio.gather(*(_one(c) for c in cards)))
+    summaries = {c.get("page_id"): c for c in cards}
+    gathered = asyncio.ensure_future(asyncio.gather(*(_one(c) for c in cards)))
+    if annotator:
+        remaining = ATTENTION_PROVISIONAL_AFTER_S - (asyncio.get_running_loop().time() - started)
+        done, _ = await asyncio.wait({gathered}, timeout=max(0.0, remaining))
+        if not done:
+            await annotator.write_provisional()
+    results = list(await gathered)
     dispatched = sum(1 for r in results if r.get("run_id") and not r.get("skipped"))
-    return {"has_work": bool(cards), "considered": len(results), "dispatched": dispatched,
-            "dry_run": dry_run, "results": results}
+    out = {"has_work": bool(cards), "considered": len(results), "dispatched": dispatched,
+           "dry_run": dry_run, "results": results}
+    if annotator:
+        out["annotation"] = await annotator.write_final(results, summaries, limit=limit)
+    elif plan_slug and not dry_run:
+        out["annotation"] = {"annotated": 0, "reason": "no-running-iteration"}
+    return out
+
+
+def _parked_on_human(card: dict) -> str | None:
+    """The SweepBlock detail when this is a Need Human card a human-judged block parks."""
+    if str(card.get("status") or "").strip().lower() != "need human":
+        return None
+    return human_judged_block(card.get("sweep_block"))
+
+
+def annotation_for(row: dict, summary: dict) -> dict:
+    """The ledger action + why for one card's sweep outcome."""
+    if row.get("error"):
+        return {"action": "dispatch-failed", "why": str(row["error"])[:500]}
+    if row.get("skipped"):
+        why = (row.get("detail") or row.get("run_id")
+               or ("card carries the qa-findings tag" if row["skipped"] == "qa-findings-card"
+                   else row["skipped"]))
+        return {"action": str(row["skipped"]), "why": str(why)[:500]}
+    reason = (summary or {}).get("reason") or ", ".join(
+        (summary or {}).get("reasons") or []) or "flagged by the board"
+    return {"action": f"dispatched-{row.get('agent_slug') or 'unknown'}",
+            "why": f"{reason}; run {row.get('run_id')}"[:500]}
+
+
+class _IterationAnnotator:
+    """Writes the running iteration's per-card annotations (AP-MT plans API, same door and
+    token as every other platform call here)."""
+
+    def __init__(self, platform: PlatformClient, slug: str, iteration_id: str,
+                 candidates: list[str]) -> None:
+        self._p, self._slug, self._it, self.candidates = platform, slug, iteration_id, candidates
+
+    async def _write(self, items: list[dict]) -> dict:
+        if not items:
+            return {"annotated": 0, "iteration_id": self._it}
+        try:
+            await self._p.annotate(self._slug, self._it, items)
+        except Exception as exc:  # never fails the dispatches
+            log.warning("attention sweep: annotation failed", exc_info=True)
+            return {"annotated": 0, "iteration_id": self._it, "error": str(exc)}
+        return {"annotated": len(items), "iteration_id": self._it}
+
+    async def write_provisional(self) -> dict:
+        return await self._write([
+            {"card": c, "action": "dispatch-pending",
+             "why": "sweep dispatches still running; the final annotation overwrites this"}
+            for c in self.candidates])
+
+    async def write_final(self, results: list[dict], summaries: dict, *, limit: int) -> dict:
+        by_card = {r.get("page_id"): r for r in results if r.get("page_id")}
+        items = []
+        for c in self.candidates:
+            row = by_card.get(c)
+            if row is None:
+                items.append({"card": c, "action": "not-in-dispatch-window",
+                              "why": f"gate candidate not in the sweep's own board read (limit {limit})"})
+            else:
+                items.append({"card": c, **annotation_for(row, summaries.get(c) or {})})
+        if not self.candidates:  # candidates unreadable: still record what we did
+            items = [{"card": c, **annotation_for(r, summaries.get(c) or {})}
+                     for c, r in by_card.items()]
+        return await self._write(items)
+
+
+async def _open_annotator(platform: PlatformClient, plan_slug: str):
+    """The annotator for the plan's running iteration, or None (manual call, plan renamed,
+    plans API unreachable): annotating is best effort and must not block the dispatches."""
+    try:
+        found = await platform.running_iteration(plan_slug)
+    except Exception:
+        log.warning("attention sweep: resolving the running iteration failed", exc_info=True)
+        return None
+    if not found:
+        return None
+    iteration_id, candidates = found
+    return _IterationAnnotator(platform, plan_slug, iteration_id, candidates)
+
+
+# The executor stamps AgentSlug with whoever ran last, so any of these can be on a card;
+# none of them implements.
+NON_IMPLEMENTERS = ("qa", "architect", "project-manager", "product-owner")
+NON_IMPLEMENTER_PREFIXES = ("qa-", "architect-", "project-manager-", "product-owner-")
 
 
 async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_id: str,
@@ -826,7 +981,7 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
         if card_status != "In Progress" or card.get("target_slug") != target:
             return {"ok": False, "reason": "expected-active-card-on-source-target"}
         selected = (card.get("agent_slug") or "").strip()
-        if selected == slug or selected in ("qa", "architect") or selected.startswith(("qa-", "architect-")):
+        if selected == slug or selected in NON_IMPLEMENTERS or selected.startswith(NON_IMPLEMENTER_PREFIXES):
             selected = ""
         card = {**card, "agent_slug": selected}
         default_coder = ""
@@ -834,7 +989,7 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
             await platform.validate_agent(selected)
         elif not card.get("workflow_slug"):
             default_coder = await resolve_default_coder(platform, board.default_coder)
-        if default_coder == slug or default_coder in ("qa", "architect") or default_coder.startswith(("qa-", "architect-")):
+        if default_coder == slug or default_coder in NON_IMPLEMENTERS or default_coder.startswith(NON_IMPLEMENTER_PREFIXES):
             raise ValueError("Workspace default must name a Coder")
 
         stamp = (await asyncio.to_thread(board.properties, page_id, [RUN_ID_PROPERTY])).get(RUN_ID_PROPERTY)
