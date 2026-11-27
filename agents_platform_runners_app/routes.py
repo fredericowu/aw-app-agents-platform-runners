@@ -18,6 +18,7 @@ import asyncio
 import hmac
 import logging
 import os
+import re
 import uuid
 
 import httpx
@@ -182,6 +183,10 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
         limit = data.get("limit", kanban_dispatch.ATTENTION_DEFAULT_LIMIT)
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50:
             raise HTTPException(422, "limit must be an integer between 1 and 50")
+        plan_slug = data.get("plan_slug")
+        if plan_slug is not None and not (
+                isinstance(plan_slug, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,99}", plan_slug)):
+            raise HTTPException(422, "plan_slug must be a plan slug")
         board = kanban_dispatch.BoardClient(
             base_url=kanban_dispatch.board_base_url(prefer_loopback=True))
 
@@ -191,6 +196,7 @@ def build_routes(config: dict | None = None, *, kanban_sweep_status: dict | None
                 return await kanban_dispatch.sweep_attention(
                     board, kanban_dispatch.PlatformClient(client, platform_base_mod.resolve(cfg)),
                     limit=limit, dry_run=bool(data.get("dry_run")),
+                    plan_slug=plan_slug,
                     agent_slug=data.get("agent_slug") or kanban_dispatch.ATTENTION_DRIVER_AGENT)
 
         task = asyncio.create_task(_run())

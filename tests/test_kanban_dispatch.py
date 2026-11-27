@@ -1000,14 +1000,15 @@ def test_attention_sweep_fires_one_po_run_per_card_with_its_own_prompt():
     plat = _AttnPlatform()
     out = asyncio.run(kd.sweep_attention(_AttnBoard(cards), plat))
     assert out["dispatched"] == 2 and out["considered"] == 2
-    assert plat.validated == ["product-owner"]
+    assert plat.validated == ["project-manager"]
     paths = sorted(p for p, _ in plat.dispatched)
-    # the card's own agent_slug (coder) must NOT win: the PO drives every card
-    assert paths == ["/api/agents/product-owner/run"] * 2
+    # the card's own agent_slug (coder) must NOT win: the PM drives every card
+    assert paths == ["/api/agents/project-manager/run"] * 2
     by_card = {pl["notion_task_id"]: pl["input"]["input"] for _, pl in plat.dispatched}
     assert set(by_card) == {"a", "b"}
     assert "page_id=a" in by_card["a"] and "page_id=b" not in by_card["a"]
-    assert "driving this card to completion" in by_card["a"]
+    assert "Project Manager driving this card" in by_card["a"]
+    assert "mark_flow_done" in by_card["a"] and "Never move a card to Planned" in by_card["a"]
 
 
 def test_attention_sweep_skips_a_card_with_a_run_in_flight_and_survives_one_failure():
@@ -1037,4 +1038,133 @@ def test_attention_sweep_with_no_work_dispatches_nothing_and_validates_nothing()
 def test_attention_sweep_dry_run_dispatches_nothing():
     plat = _AttnPlatform()
     out = asyncio.run(kd.sweep_attention(_AttnBoard([{"page_id": "a"}]), plat, dry_run=True))
-    assert plat.dispatched == [] and out["results"][0]["would_dispatch"] == "/api/agents/product-owner/run"
+    assert plat.dispatched == [] and out["results"][0]["would_dispatch"] == "/api/agents/project-manager/run"
+
+
+# ── project-manager driver: parked skip + ledger annotation ─────────────
+
+def test_driver_is_the_project_manager_not_the_product_owner():
+    assert kd.ATTENTION_DRIVER_AGENT == "project-manager"
+    assert "finish with a terminal action (mark_flow_done" not in kd._DRIVER_BRIEF
+
+
+@pytest.mark.parametrize("block,detail", [
+    ("routed-human|1|2026-11-27T10:00:00Z|approve the spend", "approve the spend"),
+    ("routed-human|1|2026-11-27T10:00:00Z|a|b pipe", "a|b pipe"),
+    ("k|escalated|2026-11-27T10:00:00Z|why", "why"),
+    ("routed-human|1|only-three", None),
+    ("", None), (None, None), ("garbage", None),
+    ("coder|2|2026-11-27T10:00:00Z|x", None),
+])
+def test_human_judged_block_matches_the_notion_rule(block, detail):
+    assert kd.human_judged_block(block) == detail
+
+
+def test_attention_sweep_skips_a_parked_need_human_card_without_a_run():
+    parked = {"page_id": "p", "status": "Need Human",
+              "sweep_block": "routed-human|1|2026-11-27T10:00:00Z|approve spend"}
+    # same block on a card that is NOT Need Human must not park it
+    moved = {"page_id": "m", "status": "In Progress", "sweep_block": parked["sweep_block"]}
+    plat = _AttnPlatform()
+    out = asyncio.run(kd.sweep_attention(_AttnBoard([parked, moved]), plat))
+    rows = {r["page_id"]: r for r in out["results"]}
+    assert rows["p"]["skipped"] == "parked-on-human" and rows["p"]["detail"] == "approve spend"
+    assert rows["m"]["run_id"]
+    assert [pl["notion_task_id"] for _, pl in plat.dispatched] == ["m"]
+
+
+class _PlanPlatform(_AttnPlatform):
+    def __init__(self, candidates, *, running=True, annotate_error=None, **kw):
+        super().__init__(**kw)
+        self.candidates, self.running, self.annotate_error = candidates, running, annotate_error
+        self.writes = []
+
+    async def running_iteration(self, slug):
+        assert slug == "kanban-sweep"
+        return ("it-1", self.candidates) if self.running else None
+
+    async def annotate(self, slug, iteration_id, items):
+        if self.annotate_error:
+            raise RuntimeError(self.annotate_error)
+        self.writes.append((slug, iteration_id, items))
+
+
+def _sweep_with_plan(cards, plat, **kw):
+    return asyncio.run(kd.sweep_attention(_AttnBoard(cards), plat, plan_slug="kanban-sweep", **kw))
+
+
+def test_annotates_every_gate_candidate_on_every_branch():
+    cards = [
+        {"page_id": "ok", "reason": "idle 50h"},
+        {"page_id": "busy"},
+        {"page_id": "parked", "status": "Need Human",
+         "sweep_block": "routed-human|1|2026-11-27T10:00:00Z|approve spend"},
+        {"page_id": "qa", "tags": ["qa-findings"]},
+        {"page_id": "bad"},
+    ]
+
+    class Plat(_PlanPlatform):
+        async def dispatch(self, path, payload):
+            if payload["notion_task_id"] == "bad":
+                return "", "HTTP 500", False
+            return await super().dispatch(path, payload)
+
+    plat = Plat(["ok", "busy", "parked", "qa", "bad", "outside"], active={"busy"})
+    out = _sweep_with_plan(cards, plat)
+    assert out["annotation"] == {"annotated": 6, "iteration_id": "it-1"}
+    (slug, it, items), = plat.writes
+    assert (slug, it) == ("kanban-sweep", "it-1")
+    by = {i["card"]: i for i in items}
+    assert set(by) == {"ok", "busy", "parked", "qa", "bad", "outside"}
+    assert by["ok"]["action"] == "dispatched-project-manager"
+    assert "idle 50h" in by["ok"]["why"] and "run-" in by["ok"]["why"]
+    assert by["busy"] == {"card": "busy", "action": "run-already-in-flight", "why": "r0"}
+    assert by["parked"]["action"] == "parked-on-human" and by["parked"]["why"] == "approve spend"
+    assert by["qa"]["action"] == "qa-findings-card" and by["qa"]["why"]
+    assert by["bad"]["action"] == "dispatch-failed" and "HTTP 500" in by["bad"]["why"]
+    assert by["outside"]["action"] == "not-in-dispatch-window"
+    assert all(i["action"].strip() and i["why"].strip() for i in items)
+
+
+def test_no_running_iteration_means_no_annotation_and_the_dispatches_still_happen():
+    plat = _PlanPlatform(["a"], running=False)
+    out = _sweep_with_plan([{"page_id": "a"}], plat)
+    assert out["dispatched"] == 1 and plat.writes == []
+    assert out["annotation"] == {"annotated": 0, "reason": "no-running-iteration"}
+
+
+def test_an_annotation_failure_never_fails_the_dispatches():
+    plat = _PlanPlatform(["a"], annotate_error="HTTP 403")
+    out = _sweep_with_plan([{"page_id": "a"}], plat)
+    assert out["dispatched"] == 1
+    assert out["annotation"]["annotated"] == 0 and "403" in out["annotation"]["error"]
+
+
+def test_no_plan_slug_or_dry_run_writes_nothing():
+    plat = _PlanPlatform(["a"])
+    asyncio.run(kd.sweep_attention(_AttnBoard([{"page_id": "a"}]), plat))
+    _sweep_with_plan([{"page_id": "a"}], plat, dry_run=True)
+    assert plat.writes == []
+
+
+def test_slow_pass_writes_a_provisional_annotation_first_then_overwrites(monkeypatch):
+    monkeypatch.setattr(kd, "ATTENTION_PROVISIONAL_AFTER_S", 0.01)
+
+    class Slow(_PlanPlatform):
+        async def dispatch(self, path, payload):
+            await asyncio.sleep(0.1)
+            return await super().dispatch(path, payload)
+
+    plat = Slow(["a"])
+    out = _sweep_with_plan([{"page_id": "a"}], plat)
+    assert [w[2][0]["action"] for w in plat.writes] == ["dispatch-pending", "dispatched-project-manager"]
+    assert out["annotation"]["annotated"] == 1
+
+
+@pytest.mark.parametrize("stamped", ["project-manager", "product-owner"])
+def test_handoff_never_builds_with_a_pm_or_po_stamped_on_the_card(stamped):
+    board = HandoffBoard(agent_slug=stamped)
+    platform = HandoffPlatform("architect")
+    receipt = asyncio.run(_handoff(board, platform, revision="design:1"))
+    assert receipt["recipient"] == "coder"
+    assert platform.dispatched[0][0] == "/api/agents/coder/run"

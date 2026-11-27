@@ -34,9 +34,11 @@ def test_rejects_a_bad_limit():
 
 def test_returns_the_per_card_results(monkeypatch):
     seen = {}
+    seen_extra = {}
 
     async def fake(board, platform, *, limit, dry_run, agent_slug, **_):
         seen.update(limit=limit, dry_run=dry_run, agent_slug=agent_slug)
+        seen_extra.update(_)
         return {"has_work": True, "considered": 1, "dispatched": 1, "dry_run": dry_run,
                 "results": [{"page_id": "a", "run_id": "r1"}]}
 
@@ -45,7 +47,7 @@ def test_returns_the_per_card_results(monkeypatch):
     r = c.post("/kanban/sweep-attention", json={"limit": 5}, headers=H)
     assert r.status_code == 200
     assert r.json()["ok"] is True and r.json()["dispatched"] == 1
-    assert seen == {"limit": 5, "dry_run": False, "agent_slug": "product-owner"}
+    assert seen == {"limit": 5, "dry_run": False, "agent_slug": "project-manager"}
 
 
 def test_board_down_is_a_502(monkeypatch):
@@ -55,3 +57,21 @@ def test_board_down_is_a_502(monkeypatch):
     monkeypatch.setattr(kd, "sweep_attention", fake)
     c = TestClient(build_routes(dict(CFG)))
     assert c.post("/kanban/sweep-attention", json={}, headers=H).status_code == 502
+
+
+def test_plan_slug_is_forwarded_and_validated(monkeypatch):
+    got = {}
+
+    async def fake(board, platform, **kw):
+        got.update(kw)
+        return {"has_work": False, "considered": 0, "dispatched": 0, "dry_run": False, "results": []}
+
+    monkeypatch.setattr(kd, "sweep_attention", fake)
+    c = TestClient(build_routes(dict(CFG)))
+    assert c.post("/kanban/sweep-attention", json={"plan_slug": "kanban-sweep"}, headers=H).status_code == 200
+    assert got["plan_slug"] == "kanban-sweep"
+    got.clear()
+    assert c.post("/kanban/sweep-attention", json={}, headers=H).status_code == 200
+    assert got["plan_slug"] is None
+    for bad in ("../x", "", 5, "a b"):
+        assert c.post("/kanban/sweep-attention", json={"plan_slug": bad}, headers=H).status_code == 422
