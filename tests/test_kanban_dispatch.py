@@ -1306,3 +1306,9 @@ def test_ledger_action_names_the_agent_that_was_dispatched():
     asyncio.run(kd.sweep_attention(_AttnBoard([{"page_id": "a"}]), plat, plan_slug="kanban-sweep",
                                    agent_slug="product-owner"))
     assert plat.writes[0][2][0]["action"] == "dispatched-product-owner"
+
+
+def test_driver_brief_puts_qa_search_before_reading_the_card_and_before_any_human_ask():
+    b = kd._DRIVER_BRIEF
+    assert b.index("qa_search") < b.index("then read the card")
+    assert "only after qa_search" in b
