@@ -481,6 +481,19 @@ class PlatformClient:
         rows = (ledger.json() or {}).get("rows") or []
         return running["id"], [r["card"] for r in rows if r.get("gate_candidate")]
 
+    async def pending_questions(self) -> dict[str, dict]:
+        """Pending ask_human questions keyed by dashless notion_task_id (newest wins)."""
+        resp = await self._c.get(f"{self._base}/api/human-questions",
+                                 params={"status": "pending", "kind": "ask_human", "limit": 500})
+        if resp.status_code != 200:
+            raise RuntimeError(f"HTTP {resp.status_code}")
+        out: dict[str, dict] = {}
+        for q in resp.json() or []:
+            key = _norm_id(q.get("notion_task_id"))
+            if key and key not in out:  # the route is newest first
+                out[key] = q
+        return out
+
     async def annotate(self, plan_slug: str, iteration_id: str, items: list[dict]) -> None:
         resp = await self._c.post(
             f"{self._base}/api/plans/{plan_slug}/iterations/{iteration_id}/annotations",
@@ -771,6 +784,14 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
     results: list[dict] = []
     if cards and not dry_run:
         await platform.validate_agent(agent_slug)
+    questions: dict[str, dict] = {}
+    questions_error: str | None = None
+    if cards and not dry_run:
+        try:  # fail open: a failed lookup dispatches as before and is reported
+            questions = await platform.pending_questions()
+        except Exception as exc:
+            log.warning("attention sweep: pending human-questions fetch failed", exc_info=True)
+            questions_error = str(exc)[:200]
     sem = asyncio.Semaphore(ATTENTION_CONCURRENCY)
 
     async def _one(summary: dict) -> dict:
@@ -786,7 +807,7 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
                     return {**row, "skipped": "run-already-in-flight", "run_id": latest.get("id")}
                 card = {**summary, **(await asyncio.to_thread(board.card, page_id))}
                 row["title"] = card.get("title")
-                parked = _parked_on_human(card)
+                parked = _parked_on_human(card) or _parked_by_question(card, questions)
                 if parked:
                     return {**row, "skipped": "parked-on-human", "detail": parked}
                 if QA_FINDINGS_TAG in _card_tags(card):
@@ -817,11 +838,27 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
     dispatched = sum(1 for r in results if r.get("run_id") and not r.get("skipped"))
     out = {"has_work": bool(cards), "considered": len(results), "dispatched": dispatched,
            "dry_run": dry_run, "results": results}
+    if questions_error:
+        out["human_questions"] = questions_error
     if annotator:
         out["annotation"] = await annotator.write_final(results, summaries, limit=limit)
     elif plan_slug and not dry_run:
         out["annotation"] = {"annotated": 0, "reason": "no-running-iteration"}
     return out
+
+
+def _norm_id(page_id) -> str:
+    return str(page_id or "").replace("-", "").strip().lower()
+
+
+def _parked_by_question(card: dict, questions: dict[str, dict]) -> str | None:
+    """Detail when a Need Human card has an ask_human already pending on it, from any agent."""
+    if str(card.get("status") or "").strip().lower() != "need human":
+        return None
+    q = questions.get(_norm_id(card.get("page_id")))
+    if not q:
+        return None
+    return f"ask_human {q.get('id')} by {q.get('agent_slug')}: {str(q.get('question') or '')[:200]}"
 
 
 def _parked_on_human(card: dict) -> str | None:
