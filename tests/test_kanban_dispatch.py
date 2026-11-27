@@ -1119,6 +1119,42 @@ def test_question_matches_regardless_of_dashes_on_either_side():
         assert out["results"][0]["skipped"] == "parked-on-human"
 
 
+def test_dry_run_applies_the_pending_question_guard():
+    plat = _AttnPlatform(questions={"abcd": _q()})
+    out = asyncio.run(kd.sweep_attention(
+        _AttnBoard([{"page_id": "abcd", "status": "Need Human"}]), plat, dry_run=True))
+    assert out["results"][0]["skipped"] == "parked-on-human"
+    assert "would_dispatch" not in out["results"][0]
+
+
+def test_slow_question_lookup_is_bounded_and_fails_open(monkeypatch):
+    monkeypatch.setattr(kd, "ATTENTION_QUESTIONS_TIMEOUT_S", 0.05)
+
+    class _Slow(_AttnPlatform):
+        async def pending_questions(self):
+            await asyncio.sleep(5)
+
+    plat = _Slow()
+    out = asyncio.run(kd.sweep_attention(
+        _AttnBoard([{"page_id": "abcd", "status": "Need Human"}]), plat))
+    assert out["human_questions"] == "TimeoutError"
+    assert out["results"][0]["run_id"] and len(plat.dispatched) == 1
+
+
+def test_saturated_question_list_is_reported_not_silent():
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return [{"id": str(i), "notion_task_id": None} for i in range(kd.PENDING_QUESTIONS_LIMIT)]
+
+    class _C:
+        async def get(self, url, params=None):
+            return _Resp()
+
+    with pytest.raises(RuntimeError, match="truncated"):
+        asyncio.run(kd.PlatformClient(_C(), "http://ap").pending_questions())
+
+
 def test_pending_questions_client_keys_dashless_and_keeps_the_newest():
     class _Resp:
         status_code = 200

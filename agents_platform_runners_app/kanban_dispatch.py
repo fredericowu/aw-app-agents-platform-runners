@@ -484,11 +484,15 @@ class PlatformClient:
     async def pending_questions(self) -> dict[str, dict]:
         """Pending ask_human questions keyed by dashless notion_task_id (newest wins)."""
         resp = await self._c.get(f"{self._base}/api/human-questions",
-                                 params={"status": "pending", "kind": "ask_human", "limit": 500})
+                                 params={"status": "pending", "kind": "ask_human", "limit": PENDING_QUESTIONS_LIMIT})
         if resp.status_code != 200:
             raise RuntimeError(f"HTTP {resp.status_code}")
+        rows = resp.json() or []
+        if len(rows) >= PENDING_QUESTIONS_LIMIT:  # the route limits tenant-wide, newest first
+            raise RuntimeError(f"truncated at {PENDING_QUESTIONS_LIMIT} pending questions; "
+                               "parked-by-question detection would be incomplete")
         out: dict[str, dict] = {}
-        for q in resp.json() or []:
+        for q in rows:
             key = _norm_id(q.get("notion_task_id"))
             if key and key not in out:  # the route is newest first
                 out[key] = q
@@ -706,6 +710,8 @@ ATTENTION_DEFAULT_LIMIT = 25
 ATTENTION_CONCURRENCY = 4
 # The route answers `pending` after 24s; a provisional annotation lands first.
 ATTENTION_PROVISIONAL_AFTER_S = 20.0
+ATTENTION_QUESTIONS_TIMEOUT_S = 8.0
+PENDING_QUESTIONS_LIMIT = 500
 
 _DRIVER_BRIEF = (
     "You are the Project Manager driving this card. Nothing else will pick it up. "
@@ -784,14 +790,16 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
     results: list[dict] = []
     if cards and not dry_run:
         await platform.validate_agent(agent_slug)
-    questions: dict[str, dict] = {}
-    questions_error: str | None = None
-    if cards and not dry_run:
-        try:  # fail open: a failed lookup dispatches as before and is reported
-            questions = await platform.pending_questions()
+    async def _fetch_questions() -> tuple[dict[str, dict], str | None]:
+        try:  # fail open: a failed or slow lookup dispatches as before and is reported
+            return await asyncio.wait_for(platform.pending_questions(),
+                                          ATTENTION_QUESTIONS_TIMEOUT_S), None
         except Exception as exc:
             log.warning("attention sweep: pending human-questions fetch failed", exc_info=True)
-            questions_error = str(exc)[:200]
+            return {}, (str(exc) or type(exc).__name__)[:200]
+
+    # Started with the pass (inside the work the provisional timer covers), awaited per card.
+    lookup = asyncio.ensure_future(_fetch_questions()) if cards else None
     sem = asyncio.Semaphore(ATTENTION_CONCURRENCY)
 
     async def _one(summary: dict) -> dict:
@@ -807,6 +815,7 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
                     return {**row, "skipped": "run-already-in-flight", "run_id": latest.get("id")}
                 card = {**summary, **(await asyncio.to_thread(board.card, page_id))}
                 row["title"] = card.get("title")
+                questions, _err = await lookup
                 parked = _parked_on_human(card) or _parked_by_question(card, questions)
                 if parked:
                     return {**row, "skipped": "parked-on-human", "detail": parked}
@@ -838,8 +847,10 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
     dispatched = sum(1 for r in results if r.get("run_id") and not r.get("skipped"))
     out = {"has_work": bool(cards), "considered": len(results), "dispatched": dispatched,
            "dry_run": dry_run, "results": results}
-    if questions_error:
-        out["human_questions"] = questions_error
+    if lookup:
+        _, questions_error = await lookup
+        if questions_error:
+            out["human_questions"] = questions_error
     if annotator:
         out["annotation"] = await annotator.write_final(results, summaries, limit=limit)
     elif plan_slug and not dry_run:
