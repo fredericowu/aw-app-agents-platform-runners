@@ -980,8 +980,14 @@ class _AttnBoard:
 
 
 class _AttnPlatform:
-    def __init__(self, active=()):
+    def __init__(self, active=(), questions=None, questions_error=None):
         self.active, self.dispatched, self.validated = set(active), [], []
+        self.questions, self.questions_error = questions or {}, questions_error
+
+    async def pending_questions(self):
+        if self.questions_error:
+            raise RuntimeError(self.questions_error)
+        return self.questions
 
     async def validate_agent(self, slug, **_):
         self.validated.append(slug)
@@ -1071,6 +1077,102 @@ def test_attention_sweep_skips_a_parked_need_human_card_without_a_run():
     assert rows["p"]["skipped"] == "parked-on-human" and rows["p"]["detail"] == "approve spend"
     assert rows["m"]["run_id"]
     assert [pl["notion_task_id"] for _, pl in plat.dispatched] == ["m"]
+
+
+def _q(qid="q1", agent="architect", text="approve the spend?"):
+    return {"id": qid, "agent_slug": agent, "question": text}
+
+
+def test_need_human_card_with_a_pending_ask_human_is_parked_without_a_run():
+    card = {"page_id": "ab-cd", "status": "Need Human"}  # no SweepBlock at all
+    plat = _AttnPlatform(questions={"abcd": _q(text="x" * 300)})
+    out = asyncio.run(kd.sweep_attention(_AttnBoard([card]), plat))
+    row = out["results"][0]
+    assert row["skipped"] == "parked-on-human"
+    assert row["detail"] == "ask_human q1 by architect: " + "x" * 200
+    assert plat.dispatched == []
+    assert "human_questions" not in out
+
+
+def test_pending_ask_human_does_not_park_a_card_outside_need_human():
+    card = {"page_id": "abcd", "status": "In Progress"}
+    plat = _AttnPlatform(questions={"abcd": _q()})
+    out = asyncio.run(kd.sweep_attention(_AttnBoard([card]), plat))
+    assert out["results"][0]["run_id"] and len(plat.dispatched) == 1
+
+
+def test_question_lookup_failure_fails_open_and_is_reported():
+    card = {"page_id": "abcd", "status": "Need Human"}
+    plat = _AttnPlatform(questions_error="HTTP 503")
+    out = asyncio.run(kd.sweep_attention(_AttnBoard([card]), plat))
+    assert out["human_questions"] == "HTTP 503"
+    assert out["results"][0]["run_id"] and len(plat.dispatched) == 1
+
+
+def test_question_matches_regardless_of_dashes_on_either_side():
+    dashed = "4255bf3b-9510-817c-9a01-eb9e3bf9d313"
+    plain = dashed.replace("-", "")
+    for card_id, key in ((dashed, plain), (plain, plain)):
+        plat = _AttnPlatform(questions={key: _q()})
+        out = asyncio.run(kd.sweep_attention(
+            _AttnBoard([{"page_id": card_id, "status": "Need Human"}]), plat))
+        assert out["results"][0]["skipped"] == "parked-on-human"
+
+
+def test_dry_run_applies_the_pending_question_guard():
+    plat = _AttnPlatform(questions={"abcd": _q()})
+    out = asyncio.run(kd.sweep_attention(
+        _AttnBoard([{"page_id": "abcd", "status": "Need Human"}]), plat, dry_run=True))
+    assert out["results"][0]["skipped"] == "parked-on-human"
+    assert "would_dispatch" not in out["results"][0]
+
+
+def test_slow_question_lookup_is_bounded_and_fails_open(monkeypatch):
+    monkeypatch.setattr(kd, "ATTENTION_QUESTIONS_TIMEOUT_S", 0.05)
+
+    class _Slow(_AttnPlatform):
+        async def pending_questions(self):
+            await asyncio.sleep(5)
+
+    plat = _Slow()
+    out = asyncio.run(kd.sweep_attention(
+        _AttnBoard([{"page_id": "abcd", "status": "Need Human"}]), plat))
+    assert out["human_questions"] == "TimeoutError"
+    assert out["results"][0]["run_id"] and len(plat.dispatched) == 1
+
+
+def test_saturated_question_list_is_reported_not_silent():
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return [{"id": str(i), "notion_task_id": None} for i in range(kd.PENDING_QUESTIONS_LIMIT)]
+
+    class _C:
+        async def get(self, url, params=None):
+            return _Resp()
+
+    with pytest.raises(RuntimeError, match="truncated"):
+        asyncio.run(kd.PlatformClient(_C(), "http://ap").pending_questions())
+
+
+def test_pending_questions_client_keys_dashless_and_keeps_the_newest():
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return [{"id": "new", "notion_task_id": "ab-cd"},
+                    {"id": "old", "notion_task_id": "abcd"},
+                    {"id": "none", "notion_task_id": None}]
+
+    class _C:
+        async def get(self, url, params=None):
+            self.seen = (url, params)
+            return _Resp()
+
+    c = _C()
+    got = asyncio.run(kd.PlatformClient(c, "http://ap/").pending_questions())
+    assert got["abcd"]["id"] == "new" and list(got) == ["abcd"]
+    assert c.seen == ("http://ap/api/human-questions",
+                      {"status": "pending", "kind": "ask_human", "limit": 500})
 
 
 class _PlanPlatform(_AttnPlatform):
