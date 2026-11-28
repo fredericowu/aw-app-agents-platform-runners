@@ -440,6 +440,20 @@ def claim_card(board: BoardClient, page_id: str, *, side: str = CLAIM_SIDE,
     return token
 
 
+async def size_hold(platform, page_id: str) -> dict | None:
+    """The active size hold on ``page_id``, or None to proceed. Must be asked
+    BEFORE any board write (claim, status move, comment): a held card that was
+    already moved to In Progress would bounce back every tick. Tolerates a
+    platform object without ``card_size`` and an AP-MT without the route."""
+    ask = getattr(platform, "card_size", None)
+    if ask is None:
+        return None
+    verdict = await ask(page_id)
+    if verdict and verdict.get("held"):
+        return verdict.get("hold") or {}
+    return None
+
+
 class PlatformClient:
     """The narrow slice of agents-platform the sweep needs.
 
@@ -456,6 +470,24 @@ class PlatformClient:
     async def latest_run(self, page_id: str) -> dict | None:
         runs = await self.card_runs(page_id, limit=1)
         return runs[0] if runs else None
+
+    async def card_size(self, page_id: str) -> dict | None:
+        """Ask AP-MT's card size gate about ``page_id`` (card 4265bf3b): measures the
+        card (run ids / comment characters), records or clears its hold and
+        returns ``{"held": bool, "mode": ..., "hold": {...}|None}``. ``None``
+        means "no verdict" and the caller proceeds as before: an older AP-MT
+        without the route (404/405), or any transport/HTTP failure. The gate
+        fails open here on purpose; AP-MT's own dispatch doors still enforce."""
+        try:
+            resp = await self._c.post(f"{self._base}/api/card-size-holds/precheck",
+                                      json={"page_id": page_id})
+        except Exception:  # noqa: BLE001
+            log.warning("card size check failed for %s", page_id, exc_info=True)
+            return None
+        if resp.status_code != 200:
+            return None
+        body = resp.json()
+        return body if isinstance(body, dict) else None
 
     async def card_runs(self, page_id: str, *, limit: int) -> list[dict]:
         resp = await self._c.get(f"{self._base}/api/runs",
@@ -631,6 +663,11 @@ async def sweep_ready(board: BoardClient, platform: PlatformClient, *,
             if dry_run:
                 results.append({**row, "would_dispatch": path,
                                 "target_slug": payload["target_slug"]})
+                continue
+
+            held = await size_hold(platform, page_id)
+            if held is not None:
+                results.append({**row, "skipped": "size-hold", "reasons": held.get("reasons")})
                 continue
 
             # Core and the gateway mount the same installed package. Hold its
@@ -829,6 +866,9 @@ async def sweep_attention(board: BoardClient, platform: PlatformClient, *,
                     build_driver_input(card, summary), default_target_slug=default_target_slug)
                 if dry_run:
                     return {**row, "would_dispatch": path, "target_slug": payload["target_slug"]}
+                held = await size_hold(platform, page_id)
+                if held is not None:
+                    return {**row, "skipped": "size-hold", "reasons": held.get("reasons")}
                 run_id, error, _rejected = await platform.dispatch(path, payload)
                 if error:
                     return {**row, "error": error}
@@ -1052,6 +1092,9 @@ async def handoff_card(board: BoardClient, platform: PlatformClient, *, source_i
         path, payload = dispatch_payload(card, f"{findings}\n\n{build_run_input(card)}",
                                          default_coder=default_coder)
         payload["caller_run_id"] = source_id
+        held = await size_hold(platform, page_id)
+        if held is not None:
+            return {"ok": False, "reason": "size-hold", "reasons": held.get("reasons")}
         if not await asyncio.to_thread(claim_card, board, page_id, token=token):
             return {"ok": False, "reason": "claim-lost"}
         try:

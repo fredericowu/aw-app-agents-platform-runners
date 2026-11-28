@@ -1312,3 +1312,90 @@ def test_driver_brief_puts_qa_search_before_reading_the_card_and_before_any_huma
     b = kd._DRIVER_BRIEF
     assert b.index("qa_search") < b.index("then read the card")
     assert "only after qa_search" in b
+
+
+# ── card size gate (card 4265bf3b) ───────────────────────────────────────
+
+_HOLD = {"held": True, "mode": "enforce", "hold": {"reasons": ["run_ids"], "run_ids": 56}}
+
+
+class _SizePlatform(FakePlatform):
+    def __init__(self, verdict, **kw):
+        super().__init__(**kw)
+        self.verdict, self.asked = verdict, []
+
+    async def card_size(self, page_id):
+        self.asked.append(page_id)
+        return self.verdict
+
+
+def test_sweep_ready_skips_a_held_card_with_no_claim_and_no_move():
+    board = FakeBoard(cards=[_ready_summary()],
+                      card={"page_id": "p1", "status": "Ready", "body_md": "do it"})
+    platform = _SizePlatform(_HOLD)
+    out = _sweep(board, platform)
+    assert out["dispatched"] == 0
+    assert out["results"][0]["skipped"] == "size-hold"
+    assert board.writes == [] and board.moves == [] and platform.dispatched == []
+
+
+def test_sweep_ready_dispatches_when_not_held_or_when_ap_mt_has_no_route():
+    for verdict in ({"held": False, "mode": "enforce", "hold": None}, None):
+        board = FakeBoard(cards=[_ready_summary()],
+                          card={"page_id": "p1", "status": "Ready", "body_md": "do it"})
+        platform = _SizePlatform(verdict)
+        assert _sweep(board, platform)["dispatched"] == 1
+        assert board.moves == [("p1", "running")]
+
+
+def test_attention_sweep_skips_a_held_card():
+    plat = _AttnPlatform()
+
+    async def card_size(page_id):
+        return _HOLD
+    plat.card_size = card_size
+    out = asyncio.run(kd.sweep_attention(
+        _AttnBoard([{"page_id": "a", "title": "A", "status": "In Progress"}]), plat))
+    assert out["dispatched"] == 0 and plat.dispatched == []
+    assert out["results"][0]["skipped"] == "size-hold"
+
+
+def test_handoff_refuses_a_held_card_before_the_claim_and_the_evidence_comment():
+    async def scenario():
+        board = HandoffBoard(agent_slug="architect")
+        platform = HandoffPlatform()
+
+        async def card_size(page_id):
+            return _HOLD
+        platform.card_size = card_size
+        out = await _handoff(board, platform)
+        assert out == {"ok": False, "reason": "size-hold", "reasons": ["run_ids"]}
+        assert board.comments == [] and board.props == {} and not board.moves
+        assert platform.dispatched == []
+    asyncio.run(scenario())
+
+
+class _Resp:
+    def __init__(self, code, body=None):
+        self.status_code, self._b = code, body
+
+    def json(self):
+        return self._b
+
+
+def test_platform_client_card_size_tolerates_old_ap_mt_and_transport_errors():
+    class C:
+        def __init__(self, resp=None, exc=None):
+            self.resp, self.exc, self.calls = resp, exc, []
+
+        async def post(self, url, json):
+            self.calls.append((url, json))
+            if self.exc:
+                raise self.exc
+            return self.resp
+
+    ok = C(_Resp(200, _HOLD))
+    assert asyncio.run(kd.PlatformClient(ok, "http://ap/").card_size("p1")) == _HOLD
+    assert ok.calls == [("http://ap/api/card-size-holds/precheck", {"page_id": "p1"})]
+    assert asyncio.run(kd.PlatformClient(C(_Resp(404)), "http://ap").card_size("p1")) is None
+    assert asyncio.run(kd.PlatformClient(C(exc=RuntimeError("down")), "http://ap").card_size("p1")) is None
