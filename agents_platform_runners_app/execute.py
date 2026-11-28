@@ -69,6 +69,7 @@ import logging
 import os
 import random
 import re
+import shlex
 import shutil
 import stat
 import tempfile
@@ -621,6 +622,7 @@ DEFAULT_TAG = os.environ.get("AW_AGENT_TAG", "latest")
 CLI_SPECS: dict[str, dict] = {
     "claude": {
         "bin": "claude", "subcmd": None, "prompt_flag": "-p",
+        "stdin_prompt_arg": None,  # bare -p reads the prompt from stdin
         "default_extra": ["--output-format", "stream-json", "--verbose"],
         "skip_perms_flag": "--dangerously-skip-permissions",
         "model_flag": "--model", "add_dir_flag": "--add-dir",
@@ -645,6 +647,7 @@ CLI_SPECS: dict[str, dict] = {
     },
     "codex": {
         "bin": "codex", "subcmd": "exec", "prompt_flag": None,
+        "stdin_prompt_arg": "-",  # `codex exec -` reads the prompt from stdin
         # "--disable", "apps" turns off Codex CLI's own native Apps/connectors
         # system (GitHub, Gmail, Sites, Booking.com, Expedia, Uber,
         # plugin_management, safety_settings — 184 tools under mcp__codex_apps,
@@ -2109,6 +2112,16 @@ MAX_ARG_STRLEN = 32 * 4096
 #: a long-lived warm container.
 APPEND_SYSTEM_PROMPT_FILENAME = "append-system-prompt.md"
 
+#: A cold-spawn prompt at or above this many bytes travels as a FILE the
+#: container's stdin is redirected from, not as an argv string. Below the
+#: kernel's 131,072-byte per-argument cap (``MAX_ARG_STRLEN``) with headroom,
+#: because the codex path re-quotes the WHOLE argv into one ``sh -lc`` string
+#: (prompt included), so the real limit is the prompt plus everything else.
+#: Small prompts keep the argv path unchanged.
+PROMPT_STDIN_THRESHOLD = 64 * 1024
+PROMPT_STDIN_FILENAME = "prompt.stdin"
+_NO_STDIN = object()
+
 
 #: Container-side env var naming the per-run ``.claude.json`` seed. Read by the
 #: cold-path ``sh -c`` wrapper and by ``aw-warm-wrapper``.
@@ -2272,7 +2285,7 @@ def _append_system_prompt_args(job: dict, spec: dict) -> list[str]:
     return [inline_flag, sys_prompt]
 
 
-def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dict, str | None]:
+def _build_container_kwargs(job: dict, client=None, *, stage_prompt: bool = True) -> tuple[str, list[str], dict, str | None]:
     """Return (image, command_argv, docker-SDK run kwargs) for this job.
 
     ``client`` is the docker-SDK client already in scope at every real call
@@ -2761,7 +2774,32 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     sys_prompt = job.get("append_system_prompt")
     if sys_prompt and not spec.get("append_system_prompt_flag"):
         prompt = f"{sys_prompt}\n\n---\n\n{prompt}" if prompt else sys_prompt
-    if spec.get("prompt_flag"):
+    # A large prompt (system prompt prepended for codex + run input) cannot
+    # ride in argv: each argv string is capped at MAX_ARG_STRLEN and codex's
+    # whole argv is folded into one `sh -lc` string, so the runtime fails with
+    # "exec container process `/usr/bin/sh`: Argument list too long" and the
+    # run bills 0 tokens. Stage it in the run's isolated dir (already mounted)
+    # and redirect the CLI's stdin from it; see the wrapper at the end.
+    prompt_stdin_container_path: str | None = None
+    stdin_arg = spec.get("stdin_prompt_arg", _NO_STDIN)
+    # Measure the SHELL-QUOTED size: the staged-creds path folds argv into one
+    # `sh -lc` string and single quotes expand 4x ('\''), so the raw length
+    # understates what the kernel sees. Warm builders discard the cold argv,
+    # so they must not leave a plaintext prompt file behind (stage_prompt).
+    if (stage_prompt and stdin_arg is not _NO_STDIN
+            and len(shlex.quote(prompt).encode("utf-8")) >= PROMPT_STDIN_THRESHOLD):
+        try:
+            (isolated_host_dir / PROMPT_STDIN_FILENAME).write_text(prompt, encoding="utf-8")
+            prompt_stdin_container_path = f"{isolated_container_path}/{PROMPT_STDIN_FILENAME}"
+        except OSError:
+            log.exception("execute: could not stage the prompt file for run=%s — "
+                          "falling back to argv", run_id)
+    if prompt_stdin_container_path:
+        if spec.get("prompt_flag"):
+            argv.append(spec["prompt_flag"])  # bare -p: the CLI reads stdin
+        if stdin_arg:
+            argv.append(stdin_arg)
+    elif spec.get("prompt_flag"):
         argv += [spec["prompt_flag"], prompt]
     else:
         argv.append(prompt)
@@ -2974,7 +3012,6 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
         # codex already separates conversations by thread id inside one home,
         # exactly like a normal ~/.codex install, so there is nothing to
         # partition here.
-        import shlex
         _home_rel = _cli_home_rel(creds_dir)
         _home_abs = Path(WORKSPACE_CONTAINER_DIR) / _home_rel
         try:
@@ -3083,6 +3120,11 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
             argv = ["sh", "-lc",
                     f'[ -f {staged_home}/config.toml ] || cp -a /aw-creds/. {staged_home}/ 2>/dev/null; '
                     f'chmod -R u+rwX {staged_home} 2>/dev/null; exec {_inner}']
+
+    if prompt_stdin_container_path:
+        # Outermost wrapper so every inner `sh -lc` / seed wrapper inherits it.
+        argv = ["sh", "-c", 'exec "$@" < "$AW_PROMPT_STDIN_FILE"', "sh", *argv]
+        env["AW_PROMPT_STDIN_FILE"] = prompt_stdin_container_path
 
     extra_args = job.get("extra_args") or []
     if (cli == "codex" and not model and codex_config_path
@@ -3265,7 +3307,7 @@ def _build_warm_kwargs_claude(job: dict, epoch_hash: str, redis_url: str, client
     session_id = job["session_id"]
     spec = CLI_SPECS["claude"]
 
-    image, _argv, kwargs, mcp_config_container_path = _build_container_kwargs(job, client)
+    image, _argv, kwargs, mcp_config_container_path = _build_container_kwargs(job, client, stage_prompt=False)
     kwargs = dict(kwargs)
 
     volumes = dict(kwargs.get("volumes") or {})
@@ -3347,7 +3389,7 @@ def _build_warm_kwargs_codex(job: dict, epoch_hash: str, redis_url: str, client=
     agent_id = job["agent_id"]
     session_id = job["session_id"]
 
-    image, _argv, kwargs, _mcp_config_container_path = _build_container_kwargs(job, client)
+    image, _argv, kwargs, _mcp_config_container_path = _build_container_kwargs(job, client, stage_prompt=False)
     kwargs = dict(kwargs)
 
     volumes = dict(kwargs.get("volumes") or {})
