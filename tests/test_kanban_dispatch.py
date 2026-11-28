@@ -1399,3 +1399,17 @@ def test_platform_client_card_size_tolerates_old_ap_mt_and_transport_errors():
     assert ok.calls == [("http://ap/api/card-size-holds/precheck", {"page_id": "p1"})]
     assert asyncio.run(kd.PlatformClient(C(_Resp(404)), "http://ap").card_size("p1")) is None
     assert asyncio.run(kd.PlatformClient(C(exc=RuntimeError("down")), "http://ap").card_size("p1")) is None
+
+
+def test_platform_client_card_size_treats_a_malformed_200_as_no_verdict():
+    class Bad:
+        status_code = 200
+
+        def json(self):
+            raise ValueError("not json")
+
+    class C:
+        async def post(self, url, json):
+            return Bad()
+
+    assert asyncio.run(kd.PlatformClient(C(), "http://ap").card_size("p1")) is None

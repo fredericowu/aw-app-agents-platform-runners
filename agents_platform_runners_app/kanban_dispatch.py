@@ -486,7 +486,11 @@ class PlatformClient:
             return None
         if resp.status_code != 200:
             return None
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError:
+            log.warning("invalid card size response for %s", page_id, exc_info=True)
+            return None
         return body if isinstance(body, dict) else None
 
     async def card_runs(self, page_id: str, *, limit: int) -> list[dict]:
