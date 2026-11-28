@@ -77,3 +77,24 @@ def test_small_prompt_keeps_the_argv_path(cli, tmp_path, monkeypatch):
     argv, kwargs = _build(cli, "hello", tmp_path, monkeypatch, new_session=True)
     assert "AW_PROMPT_STDIN_FILE" not in kwargs["environment"]
     assert any("hello" in a for a in argv)
+
+
+def test_quote_heavy_prompt_below_raw_threshold_still_goes_to_file(tmp_path, monkeypatch):
+    """27,000 single quotes quote-expand 4x (~108 KB) inside codex's `sh -lc`."""
+    prompt = "'" * 27_000
+    assert len(prompt) < execute_mod.PROMPT_STDIN_THRESHOLD
+    argv, kwargs = _build("codex", prompt, tmp_path, monkeypatch)
+    assert _oversized(argv) == []
+    assert "AW_PROMPT_STDIN_FILE" in kwargs["environment"]
+
+
+def test_warm_builders_do_not_stage_a_prompt_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(execute_mod, "WORKSPACE_CONTAINER_DIR", str(tmp_path / "ws"))
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOST_DIR", "/host/aw-workspace")
+    monkeypatch.setattr(execute_mod, "WORKSPACE_HOME_HOST_DIR", "")
+    job = {"run_id": "r-warm", "cli": "claude", "agent_id": "a1",
+           "session_id": "s1", "prompt": "x" * 70_000}
+    _i, kw = execute_mod._build_warm_kwargs_claude(
+        job, epoch_hash="e1", redis_url="redis://example.test:6379/0")
+    assert "AW_PROMPT_STDIN_FILE" not in kw["environment"]
+    assert not list((tmp_path / "ws").rglob(execute_mod.PROMPT_STDIN_FILENAME))

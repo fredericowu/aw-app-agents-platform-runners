@@ -69,6 +69,7 @@ import logging
 import os
 import random
 import re
+import shlex
 import shutil
 import stat
 import tempfile
@@ -2284,7 +2285,7 @@ def _append_system_prompt_args(job: dict, spec: dict) -> list[str]:
     return [inline_flag, sys_prompt]
 
 
-def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dict, str | None]:
+def _build_container_kwargs(job: dict, client=None, *, stage_prompt: bool = True) -> tuple[str, list[str], dict, str | None]:
     """Return (image, command_argv, docker-SDK run kwargs) for this job.
 
     ``client`` is the docker-SDK client already in scope at every real call
@@ -2781,8 +2782,12 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
     # and redirect the CLI's stdin from it; see the wrapper at the end.
     prompt_stdin_container_path: str | None = None
     stdin_arg = spec.get("stdin_prompt_arg", _NO_STDIN)
-    if (stdin_arg is not _NO_STDIN
-            and len(prompt.encode("utf-8")) >= PROMPT_STDIN_THRESHOLD):
+    # Measure the SHELL-QUOTED size: the staged-creds path folds argv into one
+    # `sh -lc` string and single quotes expand 4x ('\''), so the raw length
+    # understates what the kernel sees. Warm builders discard the cold argv,
+    # so they must not leave a plaintext prompt file behind (stage_prompt).
+    if (stage_prompt and stdin_arg is not _NO_STDIN
+            and len(shlex.quote(prompt).encode("utf-8")) >= PROMPT_STDIN_THRESHOLD):
         try:
             (isolated_host_dir / PROMPT_STDIN_FILENAME).write_text(prompt, encoding="utf-8")
             prompt_stdin_container_path = f"{isolated_container_path}/{PROMPT_STDIN_FILENAME}"
@@ -3007,7 +3012,6 @@ def _build_container_kwargs(job: dict, client=None) -> tuple[str, list[str], dic
         # codex already separates conversations by thread id inside one home,
         # exactly like a normal ~/.codex install, so there is nothing to
         # partition here.
-        import shlex
         _home_rel = _cli_home_rel(creds_dir)
         _home_abs = Path(WORKSPACE_CONTAINER_DIR) / _home_rel
         try:
@@ -3303,7 +3307,7 @@ def _build_warm_kwargs_claude(job: dict, epoch_hash: str, redis_url: str, client
     session_id = job["session_id"]
     spec = CLI_SPECS["claude"]
 
-    image, _argv, kwargs, mcp_config_container_path = _build_container_kwargs(job, client)
+    image, _argv, kwargs, mcp_config_container_path = _build_container_kwargs(job, client, stage_prompt=False)
     kwargs = dict(kwargs)
 
     volumes = dict(kwargs.get("volumes") or {})
@@ -3385,7 +3389,7 @@ def _build_warm_kwargs_codex(job: dict, epoch_hash: str, redis_url: str, client=
     agent_id = job["agent_id"]
     session_id = job["session_id"]
 
-    image, _argv, kwargs, _mcp_config_container_path = _build_container_kwargs(job, client)
+    image, _argv, kwargs, _mcp_config_container_path = _build_container_kwargs(job, client, stage_prompt=False)
     kwargs = dict(kwargs)
 
     volumes = dict(kwargs.get("volumes") or {})
